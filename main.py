@@ -12,6 +12,7 @@ if gee_json:
         gee_key['client_email'], 
         key_data=gee_json
     )
+    # Use your specific project ID
     ee.Initialize(credentials, project='ndvi-project-484422')
     print(f"Logged in as: {gee_key['client_email']}")
 else:
@@ -19,6 +20,7 @@ else:
     ee.Initialize(project='ndvi-project-484422')
 
 # --- 2. ASSETS & FILTERS ---
+# Load your paddock boundaries
 all_paddocks = ee.FeatureCollection('projects/ndvi-project-484422/assets/myfarm_paddocks')
 
 # Your specific list of paddock names
@@ -31,7 +33,7 @@ target_names = [
 
 paddocks = all_paddocks.filter(ee.Filter.inList('name', target_names))
 
-# Get the latest Sentinel-2 image (last 45 days)
+# Get the latest Sentinel-2 image from the last 45 days
 now = ee.Date(datetime.datetime.now())
 s2 = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
       .filterBounds(paddocks.geometry())
@@ -45,7 +47,7 @@ def process_analysis(feature):
     geom = feature.geometry()
     ndvi = s2.normalizedDifference(['B8', 'B4']).rename('ndvi')
     
-    # Calculate median to find the "Strip Line"
+    # Calculate median to find the "Strip Line" (grazing line)
     median_dict = ndvi.reduceRegion(reducer=ee.Reducer.median(), geometry=geom, scale=10)
     median_val = ee.Number(median_dict.get('ndvi'))
     
@@ -59,7 +61,7 @@ def process_analysis(feature):
     
     percent_grazed = ee.Number(grazed_area).divide(total_area).multiply(100)
     
-    # Effective NDVI calculation
+    # Calculate Effective NDVI (excluding the grazed portion if it's significant)
     final_ndvi = ee.Algorithms.If(
         percent_grazed.gte(15),
         ndvi.updateMask(ungrazed_mask).reduceRegion(reducer=ee.Reducer.mean(), geometry=geom, scale=10).get('ndvi'),
@@ -74,20 +76,21 @@ def process_analysis(feature):
         'cloud_pc': s2.get('CLOUDY_PIXEL_PERCENTAGE')
     })
 
-# --- 4. APPLY & EXPORT ---
+# --- 4. APPLY & EXPORT TO CLOUD STORAGE ---
 if s2:
     analyzed_paddocks = paddocks.map(process_analysis)
 
-    task = ee.batch.Export.table.toDrive(
+    # Note: We use toCloudStorage to bypass Google Drive Service Account Quota limits
+    task = ee.batch.Export.table.toCloudStorage(
         collection=analyzed_paddocks,
         description='Farm_Biomass_Update',
-        folder='FarmData',
+        bucket='farm-data-ndvi-484422', # MUST MATCH THE BUCKET YOU CREATED
         fileNamePrefix='latest_biomass',
         fileFormat='CSV',
         selectors=['paddock_name', 'date', 'ndvi_effective', 'percent_grazed', 'cloud_pc']
     )
 
     task.start()
-    print("Success: Task sent to Google Earth Engine.")
+    print("Success: Task sent to Google Cloud Storage.")
 else:
     print("Error: No clear Sentinel-2 images found in the last 45 days.")
