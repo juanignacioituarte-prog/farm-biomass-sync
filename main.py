@@ -84,7 +84,7 @@ if s2:
     task = ee.batch.Export.table.toCloudStorage(
         collection=analyzed_paddocks,
         description='Farm_Biomass_Update',
-        bucket='farm-data-ndvi-484422', # MUST MATCH THE BUCKET YOU CREATED
+        bucket='farm-data-ndvi-484422',
         fileNamePrefix='latest_biomass',
         fileFormat='CSV',
         selectors=['paddock_name', 'date', 'ndvi_effective', 'percent_grazed', 'cloud_pc']
