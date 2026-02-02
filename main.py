@@ -68,10 +68,10 @@ if s2:
     # Everything inside this 'if' must be indented by exactly 4 spaces
     analyzed_paddocks = paddocks.map(process_analysis)
 
-    task = ee.batch.Export.table.toDrive(
+   task = ee.batch.Export.table.toDrive(
         collection=analyzed_paddocks,
         description='Farm_Biomass_Update',
-        folder='FarmData',
+        folder='FarmData',  # This must match your Drive folder name
         fileNamePrefix='latest_biomass',
         fileFormat='CSV',
         selectors=['paddock_name', 'date', 'ndvi_effective', 'percent_grazed', 'cloud_pc']
