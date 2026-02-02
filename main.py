@@ -3,7 +3,7 @@ import datetime
 import os
 import json
 
-# --- 1. AUTHENTICATION (The "Login" Step) ---
+# --- 1. AUTHENTICATION ---
 gee_json = os.getenv('GEE_JSON')
 
 if gee_json:
@@ -15,14 +15,23 @@ if gee_json:
     ee.Initialize(credentials, project='ndvi-project-484422')
     print(f"Logged in as: {gee_key['client_email']}")
 else:
-    # This part runs if you test it on your local computer
+    # Fallback for local testing
     ee.Initialize(project='ndvi-project-484422')
 
-# --- 2. YOUR FARM LOGIC (Exactly as your script) ---
+# --- 2. ASSETS & FILTERS ---
 all_paddocks = ee.FeatureCollection('projects/ndvi-project-484422/assets/myfarm_paddocks')
-target_names = ['Back TP1', 'BP1', 'BP1 Dry', 'BP3', 'BP4', 'BP7', 'BP8', 'C1', 'C2', 'C3', 'C4', 'C5', 'Centre Left', 'Centre Right', 'Cottage', 'MP 15', 'MP 16', 'MP11', 'MP12', 'MP13', 'MP14', 'TP1', 'TP10', 'TP11', 'TP13', 'TP14', 'TP15', 'TP16', 'TP17', 'TP18', 'TP19', 'TP20', 'TP5', 'TP6', 'TP7','MP 17','TP3','12', 'TP8', 'TP9']
+
+# Your specific list of paddock names
+target_names = [
+    'Back TP1', 'BP1', 'BP1 Dry', 'BP3', 'BP4', 'BP7', 'BP8', 'C1', 'C2', 'C3', 'C4', 'C5', 
+    'Centre Left', 'Centre Right', 'Cottage', 'MP 15', 'MP 16', 'MP11', 'MP12', 'MP13', 
+    'MP14', 'TP1', 'TP10', 'TP11', 'TP13', 'TP14', 'TP15', 'TP16', 'TP17', 'TP18', 
+    'TP19', 'TP20', 'TP5', 'TP6', 'TP7','MP 17','TP3','12', 'TP8', 'TP9'
+]
+
 paddocks = all_paddocks.filter(ee.Filter.inList('name', target_names))
 
+# Get the latest Sentinel-2 image (last 45 days)
 now = ee.Date(datetime.datetime.now())
 s2 = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
       .filterBounds(paddocks.geometry())
@@ -31,11 +40,12 @@ s2 = (ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
       .sort('system:time_start', False)
       .first())
 
+# --- 3. ANALYSIS FUNCTION ---
 def process_analysis(feature):
     geom = feature.geometry()
     ndvi = s2.normalizedDifference(['B8', 'B4']).rename('ndvi')
     
-    # Strip Line Logic (Median)
+    # Calculate median to find the "Strip Line"
     median_dict = ndvi.reduceRegion(reducer=ee.Reducer.median(), geometry=geom, scale=10)
     median_val = ee.Number(median_dict.get('ndvi'))
     
@@ -49,6 +59,7 @@ def process_analysis(feature):
     
     percent_grazed = ee.Number(grazed_area).divide(total_area).multiply(100)
     
+    # Effective NDVI calculation
     final_ndvi = ee.Algorithms.If(
         percent_grazed.gte(15),
         ndvi.updateMask(ungrazed_mask).reduceRegion(reducer=ee.Reducer.mean(), geometry=geom, scale=10).get('ndvi'),
@@ -63,15 +74,14 @@ def process_analysis(feature):
         'cloud_pc': s2.get('CLOUDY_PIXEL_PERCENTAGE')
     })
 
-# --- 3. APPLY & EXPORT ---
+# --- 4. APPLY & EXPORT ---
 if s2:
-    # Everything inside this 'if' must be indented by exactly 4 spaces
     analyzed_paddocks = paddocks.map(process_analysis)
 
-   task = ee.batch.Export.table.toDrive(
+    task = ee.batch.Export.table.toDrive(
         collection=analyzed_paddocks,
         description='Farm_Biomass_Update',
-        folder='FarmData',  # This must match your Drive folder name
+        folder='FarmData',
         fileNamePrefix='latest_biomass',
         fileFormat='CSV',
         selectors=['paddock_name', 'date', 'ndvi_effective', 'percent_grazed', 'cloud_pc']
@@ -80,5 +90,4 @@ if s2:
     task.start()
     print("Success: Task sent to Google Earth Engine.")
 else:
-    # This 'else' aligns with the 'if' above
     print("Error: No clear Sentinel-2 images found in the last 45 days.")
