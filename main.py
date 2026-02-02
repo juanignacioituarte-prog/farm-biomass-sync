@@ -65,17 +65,20 @@ def process_analysis(feature):
 
 # --- 3. APPLY & EXPORT ---
 if s2:
+    # Everything inside this 'if' must be indented by exactly 4 spaces
     analyzed_paddocks = paddocks.map(process_analysis)
 
-   task = ee.batch.Export.table.toDrive(
+    task = ee.batch.Export.table.toDrive(
         collection=analyzed_paddocks,
         description='Farm_Biomass_Update',
-        folder='FarmData',  # Ensure this folder exists in YOUR Drive
+        folder='FarmData',
         fileNamePrefix='latest_biomass',
         fileFormat='CSV',
         selectors=['paddock_name', 'date', 'ndvi_effective', 'percent_grazed', 'cloud_pc']
     )
+
     task.start()
     print("Success: Task sent to Google Earth Engine.")
 else:
+    # This 'else' aligns with the 'if' above
     print("Error: No clear Sentinel-2 images found in the last 45 days.")
