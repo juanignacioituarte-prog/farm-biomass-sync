@@ -88,7 +88,7 @@ if s2:
         fileNamePrefix='latest_biomass',
         fileFormat='CSV',
         selectors=['paddock_name', 'date', 'ndvi_effective', 'percent_grazed', 'cloud_pc']
-    )
+    ) 
 
     task.start()
     print("Success: Task sent to Google Cloud Storage.")
