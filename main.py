@@ -67,15 +67,14 @@ def process_analysis(feature):
 if s2:
     analyzed_paddocks = paddocks.map(process_analysis)
 
-    task = ee.batch.Export.table.toDrive(
+   task = ee.batch.Export.table.toDrive(
         collection=analyzed_paddocks,
         description='Farm_Biomass_Update',
-        folder='FarmData',
+        folder='FarmData',  # Ensure this folder exists in YOUR Drive
         fileNamePrefix='latest_biomass',
         fileFormat='CSV',
         selectors=['paddock_name', 'date', 'ndvi_effective', 'percent_grazed', 'cloud_pc']
     )
-
     task.start()
     print("Success: Task sent to Google Earth Engine.")
 else:
