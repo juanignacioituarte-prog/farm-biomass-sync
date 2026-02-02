@@ -1,9 +1,4 @@
-import ee
-import datetime
 
-# 1. Initialize Earth Engine
-# Authenticate once in your terminal with 'ee.Authenticate()'
-ee.Initialize(project='ndvi-project-484422')
 
 # 2. Define Assets (Exact match to your script)
 all_paddocks = ee.FeatureCollection('projects/ndvi-project-484422/assets/myfarm_paddocks')
