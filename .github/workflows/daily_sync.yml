@@ -1,0 +1,25 @@
+name: Daily Farm Biomass Sync
+on:
+  schedule:
+    - cron: '0 17 * * *'  # 6 AM New Zealand Time
+  workflow_dispatch:      # THIS ADDS THE MANUAL "RUN" BUTTON
+
+jobs:
+  run-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Earth Engine API
+        run: pip install earthengine-api
+
+      - name: Execute GEE Sync
+        env:
+          GEE_JSON: ${{ secrets.GEE_JSON }}
+        run: python main.py
