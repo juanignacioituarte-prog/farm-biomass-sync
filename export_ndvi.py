@@ -6,11 +6,11 @@ import datetime
 # --------------------------------------------
 # AUTHENTICATION (DO NOT EDIT)
 # --------------------------------------------
-key = json.loads(os.environ["EE_KEY"])
+key_json = os.environ["EE_KEY"]
 
 credentials = ee.ServiceAccountCredentials(
-    key["client_email"],
-    key_data=key
+    email=json.loads(key_json)["client_email"],
+    key_data=key_json
 )
 
 ee.Initialize(credentials)
