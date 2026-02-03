@@ -8,16 +8,16 @@ from google.cloud import storage
 # -----------------------------
 # SETTINGS
 # -----------------------------
-GCS_BUCKET = "ndvi-exports"      
-GCS_FILE_PREFIX = "latest_biomass"  
-SHEET_ID = "1yGxWBMOLbWrzxwyMum3UgQkQdkAMra2PlQPBd8eIA04"
-SHEET_NAME = "Sheet1"
+GCS_BUCKET = "ndvi-exports"                  # Your GCS bucket
+GCS_FILE_PREFIX = "latest_biomass"          # Prefix of exported CSV files
+SHEET_ID = "1yGxWBMOLbWrzxwyMum3UgQkQdkAMra2PlQPBd8eIA04"  # Your Google Sheet ID
+SHEET_NAME = "Sheet1"                        # Sheet tab name
 
-# Secret
+# Secret: full JSON key for service account stored as GitHub secret EE_KEY
 GCP_KEY_JSON = os.environ["EE_KEY"]
 
 # -----------------------------
-# INIT CLIENTS
+# INITIALIZE CLIENTS
 # -----------------------------
 credentials = service_account.Credentials.from_service_account_info(json.loads(GCP_KEY_JSON))
 storage_client = storage.Client(credentials=credentials)
@@ -34,12 +34,13 @@ if not blobs:
 
 latest_blob = max(blobs, key=lambda b: b.time_created)
 print("✅ Downloading:", latest_blob.name)
-data_bytes = latest_blob.download_as_bytes()
 
-# Read CSV into pandas
+data_bytes = latest_blob.download_as_bytes()
 df = pd.read_csv(pd.io.common.BytesIO(data_bytes))
 
-# Keep only the 4 columns in the specified order
+# -----------------------------
+# KEEP ONLY THE 4 SPECIFIED COLUMNS
+# -----------------------------
 df = df[['paddock_name', 'date', 'ndvi_effective', 'cloud_pc']]
 
 # -----------------------------
@@ -53,9 +54,9 @@ start_row = len(existing_values) + 1  # next empty row
 print(f"📄 Writing to row {start_row} in {SHEET_NAME}")
 
 # -----------------------------
-# APPEND TO SHEET WITHOUT HEADERS
+# APPEND DATA TO SHEET (NO HEADERS)
 # -----------------------------
-values = df.values.tolist()  # only data, no headers
+values = df.values.tolist()  # only data rows
 body = {"values": values}
 
 sheet.values().update(
