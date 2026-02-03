@@ -11,7 +11,7 @@ from google.cloud import storage
 GCS_BUCKET = "ndvi-exports"                  # Your GCS bucket
 GCS_FILE_PREFIX = "latest_biomass"          # Prefix of exported CSV files
 SHEET_ID = "1yGxWBMOLbWrzxwyMum3UgQkQdkAMra2PlQPBd8eIA04"  # Your Google Sheet ID
-SHEET_NAME = "Sheet1"                        # Sheet tab name
+SHEET_NAME = "NDVI_Database"                        # Sheet tab name
 
 # Secret: full JSON key for service account stored as GitHub secret EE_KEY
 GCP_KEY_JSON = os.environ["EE_KEY"]
