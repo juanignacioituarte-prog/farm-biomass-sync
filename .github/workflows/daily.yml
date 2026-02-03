@@ -1,27 +1,33 @@
-name: Daily NDVI Export
+name: NDVI Daily Export
 
 on:
   schedule:
-    - cron: "0 18 * * *"   # 6am NZ time
+    - cron: "0 6 * * *"  # Every day at 6:00 UTC
   workflow_dispatch:
 
 jobs:
-  run-ndvi:
+  export_ndvi:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout Repo
+        uses: actions/checkout@v3
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          python -m pip install --upgrade pip
+          pip install earthengine-api pandas google-api-python-client google-cloud-storage google-auth
 
-      - name: Run NDVI export
+      - name: Run NDVI export to GCS
         env:
           EE_KEY: ${{ secrets.EE_KEY }}
         run: python export_ndvi.py
+
+      - name: Copy CSV from GCS → Google Sheets
+        env:
+          EE_KEY: ${{ secrets.EE_KEY }}
+        run: python gcs_to_sheets.py
