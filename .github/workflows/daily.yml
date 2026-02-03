@@ -22,10 +22,11 @@ jobs:
           python -m pip install --upgrade pip
           pip install earthengine-api pandas google-api-python-client google-cloud-storage google-auth
 
-      - name: Run NDVI export to GCS
-        env:
-          EE_KEY: ${{ secrets.EE_KEY }}
-        run: python export_ndvi.py
+      - name: Copy CSV from GCS → Google Sheets
+  env:
+    EE_KEY: ${{ secrets.EE_KEY }}
+  run: python gcs_to_sheets.py
+
 
       - name: Copy CSV from GCS → Google Sheets
         env:
