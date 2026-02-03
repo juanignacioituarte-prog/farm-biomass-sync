@@ -4,8 +4,9 @@ import os
 import datetime
 
 # --------------------------------------------
-# AUTHENTICATION (DO NOT EDIT)
+# AUTHENTICATION (Service Account)
 # --------------------------------------------
+# EE_KEY is the GitHub secret containing the full service account JSON
 key_json = os.environ["EE_KEY"]
 
 credentials = ee.ServiceAccountCredentials(
@@ -18,7 +19,6 @@ ee.Initialize(credentials)
 # --------------------------------------------
 # NZ PADDOCK NDVI EXPORT
 # --------------------------------------------
-
 allPaddocks = ee.FeatureCollection(
     'projects/ndvi-project-484422/assets/myfarm_paddocks'
 )
@@ -93,21 +93,19 @@ def analyze(feature):
 
 output = paddocks.map(analyze)
 
-task = ee.batch.Export.table.toDrive(
+# --------------------------------------------
+# EXPORT TO GOOGLE CLOUD STORAGE (GCS)
+# --------------------------------------------
+# Replace 'ndvi-exports' with your bucket name
+GCS_BUCKET = 'ndvi-exports'
+
+task = ee.batch.Export.table.toCloudStorage(
     collection=output,
     description='Farm_Biomass_Update',
-    folder='FarmData',
+    bucket=GCS_BUCKET,
     fileNamePrefix='latest_biomass',
-    fileFormat='CSV',
-    selectors=[
-        'paddock_name',
-        'date',
-        'ndvi_effective',
-        'percent_grazed',
-        'cloud_pc'
-    ]
+    fileFormat='CSV'
 )
 
 task.start()
-
-print("✅ NDVI export task started")
+print("✅ NDVI export task started to GCS bucket:", GCS_BUCKET)
