@@ -13,13 +13,14 @@ jobs:
     steps:
       # 1. Get the code
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       # 2. Set up Python
       - name: Set up Python 3.11
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       # 3. Install dependencies
       - name: Install dependencies
@@ -27,14 +28,21 @@ jobs:
           python -m pip install --upgrade pip
           pip install earthengine-api pandas google-api-python-client google-cloud-storage google-auth
 
-      # 4. Run NDVI export (exports CSV to GCS)
+      # 4. Create the Service Account Key file from Secrets
+      # This fixes the "[Errno 2] No such file or directory: 'service-account.json'" error
+      - name: Create Service Account Key File
+        run: echo '${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}' > service-account.json
+
+      # 5. Run NDVI export (exports CSV to GCS)
       - name: Run NDVI export to GCS
         env:
           EE_KEY: ${{ secrets.EE_KEY }}
+          GOOGLE_APPLICATION_CREDENTIALS: service-account.json
         run: python export_ndvi.py
 
-      # 5. Append CSV from GCS → Google Sheets
+      # 6. Append CSV from GCS → Google Sheets
       - name: Copy CSV from GCS → Google Sheets
         env:
           EE_KEY: ${{ secrets.EE_KEY }}
+          GOOGLE_APPLICATION_CREDENTIALS: service-account.json
         run: python gcs_to_sheets.py
