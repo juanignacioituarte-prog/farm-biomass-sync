@@ -9,7 +9,7 @@ from googleapiclient.errors import HttpError
 # Configuration
 SHEET_ID = "1yGxWBMOLbWrzxwyMum3UgQkQdkAMra2PlQPBd8eIA04"
 SHEET_NAME = "rawdata"  # Ensure this matches your tab name
-BUCKET_NAME = "farm-biomass-data" # Update if your bucket name is different
+BUCKET_NAME = "ndvi-exports" # Update if your bucket name is different
 FILE_NAME = "latest_biomass.csv"
 
 def execute_with_retry(request, max_retries=5):
