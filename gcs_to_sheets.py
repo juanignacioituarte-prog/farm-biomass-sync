@@ -8,7 +8,7 @@ from googleapiclient.errors import HttpError
 
 # Configuration
 SHEET_ID = "1yGxWBMOLbWrzxwyMum3UgQkQdkAMra2PlQPBd8eIA04"
-SHEET_NAME = "rawdata"  # Ensure this matches your tab name
+SHEET_NAME = "NDVI_Database"  # Ensure this matches your tab name
 BUCKET_NAME = "ndvi-exports" # Update if your bucket name is different
 FILE_NAME = "latest_biomass.csv"
 
