@@ -5,23 +5,17 @@ import os
 
 # 1. AUTHENTICATION
 service_account_path = 'service-account.json'
-if not os.path.exists(service_account_path):
-    print("❌ service-account.json missing!")
-    exit(1)
-
 with open(service_account_path) as f:
     credentials = json.load(f)
 
 ee.Initialize(ee.ServiceAccountCredentials(credentials['client_email'], service_account_path))
 
-# 2. ASSETS & DYNAMIC DATES
+# 2. ASSETS
 allPaddocks = ee.FeatureCollection('projects/ndvi-project-484422/assets/myfarm_paddocks')
 
-# Get last 14 days automatically
-end_date = ee.Date(time.strftime('%Y-%m-%d')) 
+# Get last 14 days
+end_date = ee.Date(time.strftime('%Y-%m-%d'))
 start_date = end_date.advance(-14, 'day')
-
-print(f"📅 Running for range: {start_date.format('YYYY-MM-DD').getInfo()} to {end_date.format('YYYY-MM-DD').getInfo()}")
 
 collection = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
               .filterBounds(allPaddocks)
@@ -30,13 +24,21 @@ collection = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
 
 # 3. PROCESSING
 def process_image(image):
-    date = image.date().format('YYYY-MM-DD')
-    cloud_pc = image.get('CLOUDY_PIXEL_PERCENTAGE')
+    # Get image-wide properties
+    date_str = image.date().format('YYYY-MM-DD')
     update_time = image.date().format('YYYY-MM-DD HH:mm')
+    cloud_pc = image.get('CLOUDY_PIXEL_PERCENTAGE')
     img_id = image.id()
     
+    # Calculate NDVI
     ndvi_img = image.normalizedDifference(['B8', 'B4']).rename('ndvi_effective')
     
+    # Generate Map ID for this specific image
+    viz = {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}
+    map_info = ndvi_img.getMapId(viz)
+    tile_url = map_info['tile_fetcher'].url_format
+    map_token = map_info['token']
+
     def stats_per_paddock(paddock):
         stats = ndvi_img.reduceRegion(
             reducer=ee.Reducer.mean(),
@@ -44,71 +46,40 @@ def process_image(image):
             scale=10,
             maxPixels=1e9
         )
+        # Create a feature for EACH paddock
         return ee.Feature(None, {
-            'name': paddock.get('name'), 
-            'date': date,
-            'ndvi_effective': stats.get('ndvi_effective'),
+            'paddock_name': paddock.get('name'), 
+            'date': date_str,
+            'ndvi_mean': stats.get('ndvi_effective'),
             'cloud_pc': cloud_pc,
-            'latest-update': update_time,
-            'image_id': img_id
+            'last_update': update_time,
+            'tile_url': tile_url,
+            'map_token': map_token
         })
     
     return allPaddocks.map(stats_per_paddock)
 
-results = collection.map(process_image).flatten().filter(ee.Filter.notNull(['ndvi_effective']))
+# Map over images and flatten into a single list of paddock-level features
+results = collection.map(process_image).flatten().filter(ee.Filter.notNull(['ndvi_mean']))
 
-# 4. MAP ID & TOKEN GENERATION
-print("Calculating Map IDs and Access Tokens...")
-unique_img_ids = ee.List(results.aggregate_array('image_id')).distinct().getInfo()
-
-# Dictionary to store the mapping data
-map_data_dict = {}
-viz = {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}
-
-for img_id in unique_img_ids:
-    img = ee.Image(f"COPERNICUS/S2_SR_HARMONIZED/{img_id}")
-    map_info = img.normalizedDifference(['B8', 'B4']).getMapId(viz)
-    
-    # Store both the specific token and the full URL template
-    map_data_dict[img_id] = {
-        'map_id': map_info['mapid'],
-        'token': map_info['token'],
-        'tile_url': map_info['tile_fetcher'].url_format
-    }
-
-def attach_map_metadata(f):
-    img_id = f.get('image_id')
-    # Use ee.Dictionary to handle the lookup within the GEE environment
-    meta = ee.Dictionary(map_data_dict).get(img_id)
-    return f.set({
-        'map_id': ee.Dictionary(meta).get('map_id'),
-        'map_token': ee.Dictionary(meta).get('token'),
-        'tile_url': ee.Dictionary(meta).get('tile_url')
-    })
-
-final_results = results.map(attach_map_metadata)
-
-# 5. EXPORT & WAIT
+# 4. EXPORT
 task = ee.batch.Export.table.toCloudStorage(
-    collection=final_results,
-    description='NDVI_Daily_Sync_With_Tokens',
+    collection=results,
+    description='NDVI_Paddock_Level_Sync',
     bucket='ndvi-exports',
     fileNamePrefix='ndvi_data',
     fileFormat='CSV',
-    # Added map_token and tile_url to the selectors
-    selectors=['name', 'date', 'ndvi_effective', 'cloud_pc', 'latest-update', 'map_id', 'map_token', 'tile_url']
+    selectors=['paddock_name', 'date', 'ndvi_mean', 'cloud_pc', 'last_update', 'tile_url', 'map_token']
 )
 
 task.start()
-print(f"🚀 Task {task.id} started. Polling status...")
+print(f"🚀 Task {task.id} started. Monitoring...")
 
 while task.active():
-    time.sleep(30)
-    status = task.status()['state']
-    print(f"⏳ Status: {status}")
+    time.sleep(15)
+    print(f"⏳ Status: {task.status()['state']}")
 
 if task.status()['state'] == 'COMPLETED':
-    print("✅ Export complete. CSV with Map Tokens is ready in GCS.")
+    print("✅ Export complete. Individual paddock data is in GCS.")
 else:
-    print(f"❌ Export failed: {task.status().get('error_message')}")
-    exit(1)
+    print(f"❌ Error: {task.status().get('error_message')}")
