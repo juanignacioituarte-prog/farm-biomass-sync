@@ -1,4 +1,5 @@
 name: NDVI Daily Export
+
 on:
   schedule:
     - cron: "0 6 * * *"
@@ -7,24 +8,25 @@ on:
 jobs:
   sync_paddocks:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           
-      - name: Install deps
+      - name: Install dependencies
         run: pip install earthengine-api pandas google-api-python-client google-cloud-storage google-auth
 
-      - name: Create Auth File
+      - name: Create Service Account Key
         run: echo '${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}' > service-account.json
 
-      - name: Export from GEE (Waits for finish)
+      - name: Run NDVI Export
         env:
           GOOGLE_APPLICATION_CREDENTIALS: service-account.json
         run: python export_ndvi.py
 
-      - name: Append to Sheets
+      - name: Sync to Google Sheets
         env:
           GOOGLE_APPLICATION_CREDENTIALS: service-account.json
         run: python gcs_to_sheets.py
