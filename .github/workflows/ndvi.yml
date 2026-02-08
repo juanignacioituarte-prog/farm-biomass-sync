@@ -1,11 +1,44 @@
-- name: Create Service Account Key
-        env:
-          # This maps your specific secret name to the file the script needs
-          GEE_JSON_CONTENT: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+name: Farm NDVI Sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 18 * * *' # Runs daily (approx. 7 AM NZ Time)
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
         run: |
-          if [ -z "$GEE_JSON_CONTENT" ]; then
-            echo "❌ ERROR: GCP_SERVICE_ACCOUNT_KEY is missing!"
+          pip install earthengine-api requests pandas google-cloud-storage google-api-python-client google-auth-oauthlib
+
+      - name: Create Service Account Key
+        env:
+          # Using your specific secret name
+          JSON_KEY: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+        run: |
+          if [ -z "$JSON_KEY" ]; then
+            echo "❌ ERROR: GCP_SERVICE_ACCOUNT_KEY secret is missing!"
             exit 1
           fi
-          echo "$GEE_JSON_CONTENT" > service-account.json
-          echo "✅ service-account.json created."
+          echo "$JSON_KEY" > service-account.json
+          echo "✅ service-account.json created successfully."
+
+      - name: Step 1 - GEE Analysis
+        run: python fetch_ndvi.py
+
+      - name: Wait for GEE Export
+        # Brief pause to let GEE register the task before the next script checks the bucket
+        run: sleep 60
+
+      - name: Step 2 - Sheets Transfer
+        run: python transfer_to_sheets.py
