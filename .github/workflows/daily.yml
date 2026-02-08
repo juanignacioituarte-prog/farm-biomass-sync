@@ -11,37 +11,45 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          # Added google-auth-oauthlib for better Sheets integration
-          pip install earthengine-api pandas google-api-python-client google-cloud-storage google-auth google-auth-oauthlib
+          pip install earthengine-api pandas google-api-python-client google-cloud-storage google-auth
 
-      - name: Create Service Account Key File
+      - name: Create Service Account Key
         run: echo '${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}' > service-account.json
 
-      - name: Run NDVI export to GCS
+      - name: Trigger Earth Engine Export
         env:
           GOOGLE_APPLICATION_CREDENTIALS: service-account.json
         run: python export_ndvi.py
 
-      # NEW STEP: Wait for the file to actually exist in GCS
-      # This prevents the "file not found" or "incomplete data" error
-      - name: Wait for GCS Export Completion
+      - name: Wait for GCS File Completion
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: service-account.json
         run: |
-          echo "Waiting for Earth Engine to finish exporting to GCS..."
-          sleep 60  # Give it a 60-second head start
-          # You can increase this if your area of interest is large
+          echo "Monitoring GCS for the new export..."
+          # This simple python snippet waits until the file exists
+          python -c "
+          import time, os
+          from google.cloud import storage
+          client = storage.Client()
+          bucket = client.bucket('ndvi-exports')
+          blob = bucket.blob('ndvi_data.csv')
+          for i in range(20): # Try for 10 minutes
+              if blob.exists():
+                  print('File found!'); break
+              print('Waiting for Earth Engine... (30s)'); time.sleep(30)
+          "
 
-      - name: Copy CSV from GCS → Google Sheets
+      - name: Sync GCS to Google Sheets
         env:
           GOOGLE_APPLICATION_CREDENTIALS: service-account.json
         run: python gcs_to_sheets.py
