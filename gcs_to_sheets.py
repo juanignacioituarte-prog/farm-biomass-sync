@@ -24,12 +24,19 @@ def run_transfer():
     try:
         content = blob.download_as_bytes()
         df = pd.read_csv(io.BytesIO(content))
-        print(f"✅ Downloaded {len(df)} rows from GCS.")
+        
+        # Standardize column names (lowercase & stripped of spaces)
+        df.columns = df.columns.str.strip().str.lower()
+        print(f"✅ Found columns: {df.columns.tolist()}")
     except Exception as e:
         print(f"❌ Error downloading CSV: {e}")
         return
 
-    # 3. Prevent Duplicates (Key = Paddock Name + Date)
+    # 3. Prevent Duplicates (Key = Name + Date)
+    if 'name' not in df.columns or 'date' not in df.columns:
+        print(f"❌ Critical Error: 'name' or 'date' column missing. Found: {df.columns.tolist()}")
+        return
+
     try:
         result = service.spreadsheets().values().get(
             spreadsheetId=SPREADSHEET_ID, 
@@ -40,23 +47,27 @@ def run_transfer():
     except Exception:
         existing_keys = set()
 
-    # Create unique keys for incoming data
-    df['key'] = df['name'].astype(str) + "_" + df['date'].astype(str)
-    
     # Filter only new records
+    df['key'] = df['name'].astype(str) + "_" + df['date'].astype(str)
     df_new = df[~df['key'].isin(existing_keys)].copy()
     df_new.drop(columns=['key'], inplace=True)
 
     if df_new.empty:
-        print("⏭️ No new unique data found. Sheet is already up to date.")
+        print("⏭️ No new unique data found. Sheet is up to date.")
         return
 
     # 4. Upload (NO HEADERS)
-    # We round NDVI to 4 decimal places for cleanliness
+    # Define the exact order you want in the Sheet
+    target_cols = ['name', 'date', 'ndvi_effective', 'cloud_pc', 'latest-update', 'map_id']
+    
+    # Only use columns that exist in the dataframe
+    cols_to_use = [c for c in target_cols if c in df_new.columns]
+    
+    # Formatting: Round NDVI for cleaner reading
     if 'ndvi_effective' in df_new.columns:
-        df_new['ndvi_effective'] = df_new['ndvi_effective'].round(4)
+        df_new['ndvi_effective'] = pd.to_numeric(df_new['ndvi_effective'], errors='coerce').round(4)
 
-    values = df_new.fillna('').values.tolist()
+    values = df_new[cols_to_use].fillna('').values.tolist()
 
     service.spreadsheets().values().append(
         spreadsheetId=SPREADSHEET_ID,
@@ -66,7 +77,7 @@ def run_transfer():
         body={'values': values} 
     ).execute()
     
-    print(f"✅ Successfully appended {len(values)} new records to Sheets.")
+    print(f"✅ Successfully appended {len(values)} records.")
 
 if __name__ == "__main__":
     run_transfer()
