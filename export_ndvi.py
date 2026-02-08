@@ -3,36 +3,89 @@ import json
 import time
 import os
 import requests
-import pandas as pd
 
-# ... (Keep your Auth and Process logic from the previous script) ...
-
-# 5. GENERATE TILE URLs & COLLECT DATA
-print("Collecting data from GEE...")
-# Instead of an export task, we get the data directly to the script
-raw_results = final_results.getInfo()
-features = raw_results.get('features', [])
-
-data_list = []
-for f in features:
-    props = f['properties']
-    # Calculate cover using your formula (e.g., NDVI * 2500)
-    ndvi = props.get('ndvi_mean')
-    cover = Math.round(ndvi * 2500) if ndvi is not None else 0
-    
-    data_list.append({
-        'paddock_name': props.get('paddock_name'),
-        'date': props.get('date'),
-        'cover': cover,
-        'ndvi_mean': ndvi,
-        'cloud_pc': props.get('cloud_pc'),
-        'map_id': props.get('tile_url') # This is the tile_url for your dashboard
-    })
-
-# 6. SAVE TO CSV
-if data_list:
-    df = pd.DataFrame(data_list)
-    df.to_csv('paddocks_ndvi.csv', index=False)
-    print(f"✅ Successfully saved {len(data_list)} rows to paddocks_ndvi.csv")
+# 1. AUTHENTICATION
+service_account_path = 'service-account.json'
+if os.path.exists(service_account_path):
+    with open(service_account_path) as f:
+        credentials = json.load(f)
+    ee.Initialize(
+        ee.ServiceAccountCredentials(credentials['client_email'], service_account_path),
+        project='ndvi-project-484422'
+    )
 else:
-    print("⚠️ No data found to save.")
+    ee.Initialize(project='ndvi-project-484422')
+
+# 2. FETCH PADDOCKS
+GEOJSON_URL = "https://storage.googleapis.com/ndvi-exports/paddocks.geojson"
+def get_paddocks():
+    response = requests.get(GEOJSON_URL)
+    response.raise_for_status()
+    return ee.FeatureCollection(response.json())
+
+allPaddocks = get_paddocks()
+
+# 3. DATE & COLLECTION
+end_date = ee.Date(time.strftime('%Y-%m-%d'))
+start_date = end_date.advance(-14, 'day')
+
+collection = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+              .filterBounds(allPaddocks.geometry())
+              .filterDate(start_date, end_date)
+              .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40)))
+
+# 4. PROCESSING
+def process_image(image):
+    date_str = image.date().format('YYYY-MM-DD')
+    update_time = image.date().format('YYYY-MM-DD HH:mm')
+    cloud_pc = image.get('CLOUDY_PIXEL_PERCENTAGE')
+    img_id = image.id()
+    ndvi_img = image.normalizedDifference(['B8', 'B4']).rename('ndvi_effective')
+    
+    def stats_per_paddock(paddock):
+        stats = ndvi_img.reduceRegion(
+            reducer=ee.Reducer.mean(),
+            geometry=paddock.geometry(),
+            scale=10,
+            maxPixels=1e9
+        )
+        return ee.Feature(None, {
+            'paddock_name': paddock.get('name'), 
+            'date': date_str,
+            'ndvi_effective': stats.get('ndvi_effective'),
+            'cloud_pc': cloud_pc,
+            'last_update': update_time,
+            'image_id': img_id 
+        })
+    return allPaddocks.map(stats_per_paddock)
+
+results_fc = collection.map(process_image).flatten().filter(ee.Filter.notNull(['ndvi_effective']))
+
+# 5. TILE URLS
+unique_ids = ee.List(results_fc.aggregate_array('image_id')).distinct().getInfo()
+map_metadata = {}
+viz = {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}
+
+for iid in unique_ids:
+    img = ee.Image(f"COPERNICUS/S2_SR_HARMONIZED/{iid}")
+    map_info = img.normalizedDifference(['B8', 'B4']).getMapId(viz)
+    map_metadata[iid] = {'tile_url': map_info['tile_fetcher'].url_format}
+
+def attach_maps(f):
+    img_id = f.get('image_id')
+    meta = ee.Dictionary(map_metadata).get(img_id)
+    return f.set({'tile_url': ee.Dictionary(meta).get('tile_url')})
+
+final_results = results_fc.map(attach_maps)
+
+# 6. EXPORT
+task = ee.batch.Export.table.toCloudStorage(
+    collection=final_results,
+    description='NDVI_Sync',
+    bucket='ndvi-exports',
+    fileNamePrefix='ndvi_data',
+    fileFormat='CSV',
+    selectors=['paddock_name', 'date', 'ndvi_effective', 'cloud_pc', 'last_update', 'tile_url']
+)
+task.start()
+print(f"Task Started: {task.id}")
