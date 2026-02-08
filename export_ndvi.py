@@ -27,8 +27,6 @@ def calculate_ndvi_stats(image):
     
     ndvi_img = image.normalizedDifference(['B8', 'B4']).rename('ndvi_effective')
     
-    # Add NDVI image to the feature so we can access it later if needed, 
-    # but for now, just map over paddocks
     def stats_per_paddock(paddock):
         stats = ndvi_img.reduceRegion(
             reducer=ee.Reducer.mean(),
@@ -37,11 +35,11 @@ def calculate_ndvi_stats(image):
             maxPixels=1e9
         )
         return paddock.set({
+            'name': paddock.get('name'), # Explicitly keep the paddock name
             'date': date,
             'ndvi_effective': stats.get('ndvi_effective'),
             'cloud_pc': cloud_pc,
             'latest-update': update_time,
-            # We add the IMAGE ID here so we can generate MapIDs later
             'image_id': image.id()
         })
     
@@ -51,25 +49,21 @@ results = collection.map(calculate_ndvi_stats).flatten()
 results = results.filter(ee.Filter.notNull(['ndvi_effective']))
 
 # --- STEP B: GENERATE MAP IDs (CLIENT SIDE) ---
-# Since we can't do this inside the map, we have to get the list of unique image IDs
-# This part stays efficient by only getting the IDs, not the whole data.
 print("Calculating Map IDs...")
 unique_images = collection.toList(collection.size())
-image_list = unique_images.getInfo() # Client-side call
+image_list = unique_images.getInfo() 
 
 map_id_dict = {}
 viz_params = {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}
 
 for img_info in image_list:
     img = ee.Image(img_info['id'])
-    # Re-calculate NDVI for the MapID
     ndvi_layer = img.normalizedDifference(['B8', 'B4'])
     map_id_dict[img_info['id']] = ndvi_layer.getMapId(viz_params)['mapid']
 
 # --- STEP C: ATTACH MAP IDs TO RESULTS ---
 def attach_map_id(feature):
     img_id = feature.get('image_id')
-    # Use an Earth Engine dictionary to map the IDs back
     ee_map_dict = ee.Dictionary(map_id_dict)
     return feature.set('map_id', ee_map_dict.get(img_id))
 
@@ -78,7 +72,7 @@ final_results = results.map(attach_map_id)
 # 3. EXPORT
 task = ee.batch.Export.table.toCloudStorage(
     collection=final_results,
-    description='Paddock_NDVI_MapID_Fixed',
+    description='Paddock_NDVI_Corrected',
     bucket='ndvi-exports',
     fileNamePrefix='ndvi_data',
     fileFormat='CSV',
@@ -86,4 +80,4 @@ task = ee.batch.Export.table.toCloudStorage(
 )
 
 task.start()
-print("🚀 Fixed Export started. MapIDs generated correctly.")
+print("🚀 Export started. Paddock 'name' and 'map_id' are both included.")
