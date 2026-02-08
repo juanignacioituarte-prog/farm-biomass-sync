@@ -12,32 +12,33 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v3
 
-     - name: Set up Python
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11' # Upgraded from 3.10
+          python-version: '3.11' # Upgraded to resolve Google API warnings
+
       - name: Install Dependencies
         run: |
           pip install earthengine-api requests pandas google-cloud-storage google-api-python-client google-auth-oauthlib
 
       - name: Create Service Account Key
         env:
-          # Using your specific secret name
-          JSON_KEY: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+          # Maps your secret name to a variable for the shell command
+          GCP_KEY: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
         run: |
-          if [ -z "$JSON_KEY" ]; then
+          if [ -z "$GCP_KEY" ]; then
             echo "❌ ERROR: GCP_SERVICE_ACCOUNT_KEY secret is missing!"
             exit 1
           fi
-          echo "$JSON_KEY" > service-account.json
+          echo "$GCP_KEY" > service-account.json
           echo "✅ service-account.json created successfully."
 
       - name: Step 1 - GEE Analysis
         run: python fetch_ndvi.py
 
-      - name: Wait for GEE Export
-        # Brief pause to let GEE register the task before the next script checks the bucket
-        run: sleep 60
+      - name: Grace Period
+        # Gives GEE a moment to register the export task
+        run: sleep 30
 
       - name: Step 2 - Sheets Transfer
         run: python transfer_to_sheets.py
