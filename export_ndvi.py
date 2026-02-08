@@ -17,7 +17,7 @@ ee.Initialize(ee.ServiceAccountCredentials(credentials['client_email'], service_
 # 2. ASSETS & DYNAMIC DATES
 allPaddocks = ee.FeatureCollection('projects/ndvi-project-484422/assets/myfarm_paddocks')
 
-# Automatically gets today's date from the system
+# Get last 14 days automatically
 end_date = ee.Date(time.strftime('%Y-%m-%d')) 
 start_date = end_date.advance(-14, 'day')
 
@@ -44,7 +44,6 @@ def process_image(image):
             scale=10,
             maxPixels=1e9
         )
-        # Returns a clean feature with the paddock name preserved
         return ee.Feature(None, {
             'name': paddock.get('name'), 
             'date': date,
@@ -60,14 +59,12 @@ results = collection.map(process_image).flatten().filter(ee.Filter.notNull(['ndv
 
 # 4. MAP ID GENERATION
 print("Calculating Map IDs...")
-# Filter unique image IDs from the results to only generate MapIDs for images that actually had data
 unique_img_ids = ee.List(results.aggregate_array('image_id')).distinct().getInfo()
 
 map_id_dict = {}
 viz = {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}
 
 for img_id in unique_img_ids:
-    # Reconstruct the image from the ID to get the MapID
     img = ee.Image(f"COPERNICUS/S2_SR_HARMONIZED/{img_id}")
     map_id_dict[img_id] = img.normalizedDifference(['B8', 'B4']).getMapId(viz)['mapid']
 
@@ -87,15 +84,15 @@ task = ee.batch.Export.table.toCloudStorage(
 )
 
 task.start()
-print(f"🚀 Task {task.id} started. Waiting for Earth Engine to finish...")
+print(f"🚀 Task {task.id} started. Polling status...")
 
 while task.active():
     time.sleep(30)
     status = task.status()['state']
-    print(f"⏳ Current Status: {status}")
+    print(f"⏳ Status: {status}")
 
 if task.status()['state'] == 'COMPLETED':
-    print("✅ Export complete. File is ready in GCS.")
+    print("✅ Export complete. CSV is ready in GCS.")
 else:
     print(f"❌ Export failed: {task.status().get('error_message')}")
     exit(1)
