@@ -8,7 +8,8 @@ import io
 SERVICE_ACCOUNT_FILE = 'service-account.json'
 BUCKET_NAME = 'ndvi-exports'
 FILE_NAME = 'ndvi_data.csv'
-SPREADSHEET_ID = 'yGxWBMOLbWrzxwyMum3UgQkQdkAMra2PlQPBd8eIA04' # Change this!
+SPREADSHEET_ID = '1yGxWBMOLbWrzxwyMum3UgQkQdkAMra2PlQPBd8eIA04'
+# If the tab at the bottom of your sheet is named "NDVI_Database", use this:
 RANGE_NAME = 'NDVI_Database!A1'
 
 creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE)
