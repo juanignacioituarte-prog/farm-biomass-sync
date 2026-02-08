@@ -6,53 +6,23 @@ on:
   workflow_dispatch:
 
 jobs:
-  export_ndvi:
+  sync_paddocks:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-
+          
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install earthengine-api pandas google-api-python-client google-cloud-storage google-auth
+        run: pip install earthengine-api pandas google-api-python-client google-cloud-storage google-auth
 
-      - name: Create Service Account Key
-        run: echo '${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}' > service-account.json
-
-      - name: Trigger Earth Engine Export
+      - name: Run Export (This now waits for GEE to finish)
         env:
           GOOGLE_APPLICATION_CREDENTIALS: service-account.json
         run: python export_ndvi.py
 
-      - name: Wait for GCS File Completion
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: service-account.json
-        run: |
-          echo "Monitoring GCS for the new export..."
-          python -c "
-          import time
-          from google.cloud import storage
-          client = storage.Client()
-          bucket = client.bucket('ndvi-exports')
-          blob = bucket.blob('ndvi_data.csv')
-          # Check for up to 15 minutes
-          for i in range(30): 
-              if blob.exists():
-                  print('✅ File ready!'); break
-              print(f'Waiting... ({i*30}s)'); time.sleep(30)
-          else:
-              print('❌ Timeout: File not found'); exit(1)
-          "
-
-      - name: Sync GCS to Google Sheets
+      - name: Update Google Sheets
         env:
           GOOGLE_APPLICATION_CREDENTIALS: service-account.json
         run: python gcs_to_sheets.py
