@@ -21,18 +21,17 @@ jobs:
         run: |
           pip install earthengine-api requests pandas google-cloud-storage google-api-python-client google-auth-oauthlib
 
-      - name: Create Service Account Key
-        # Using a multi-line pipe and shell quoting to ensure the JSON is written correctly
+     - name: Create Service Account Key
+        # We tell the script to look for EE_KEY instead of GEE_JSON
         run: |
-          cat <<EOF > service-account.json
-          ${{ secrets.GEE_JSON }}
-          EOF
+          echo "${{ secrets.EE_KEY }}" > service-account.json
           
-          # Basic validation: Check if file is larger than 100 bytes
+          # Validation check
           if [ $(stat -c%s "service-account.json") -lt 100 ]; then
-            echo "Error: service-account.json is empty or too small. Check GEE_JSON secret."
+            echo "Error: service-account.json is empty. Check if EE_KEY is set correctly."
             exit 1
           fi
+          echo "✅ service-account.json created successfully."
 
       - name: Step 1 - GEE Analysis
         run: python fetch_ndvi.py
