@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Allows the bot to push the CSV to your repo
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v3
@@ -18,10 +20,18 @@ jobs:
           python-version: '3.9'
 
       - name: Install Dependencies
-        run: pip install earthengine-api requests
+        run: pip install earthengine-api requests pandas
 
       - name: Create Service Account Key
         run: echo '${{ secrets.GEE_JSON }}' > service-account.json
 
       - name: Run Analysis
         run: python fetch_ndvi.py
+
+      - name: Commit and Push CSV
+        run: |
+          git config --global user.name "FarmBot"
+          git config --global user.email "bot@farm.com"
+          git add paddocks_ndvi.csv
+          git commit -m "Update NDVI data: $(date)" || exit 0
+          git push
