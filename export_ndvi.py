@@ -11,7 +11,7 @@ ee.Initialize(ee.ServiceAccountCredentials(credentials['client_email'], service_
 allPaddocks = ee.FeatureCollection('projects/ndvi-project-484422/assets/myfarm_paddocks')
 
 # 2. SET UP DATA COLLECTION
-# Fetching the last 14 days to keep the file size manageable and data fresh
+# Fetching the last 14 days
 start_date = ee.Date(ee.Date.fromYMD(2026, 2, 8).advance(-14, 'day'))
 end_date = ee.Date.fromYMD(2026, 2, 8)
 
@@ -28,8 +28,7 @@ def process_image(image):
     # Calculate NDVI
     ndvi_img = image.normalizedDifference(['B8', 'B4']).rename('ndvi_effective')
     
-    # GENERATE MAP ID for this specific image
-    # Visualization params: NDVI usually ranges 0 to 1 for vegetation
+    # Generate MapID for visualization
     viz_params = {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}
     map_info = ndvi_img.getMapId(viz_params)
     current_map_id = map_info['mapid']
@@ -43,7 +42,7 @@ def process_image(image):
         )
         
         return feature.set({
-            'paddock_name': feature.get('paddock_name'), # Ensure this matches your asset property
+            'name': feature.get('name'), # Updated to match your asset's 'name' property
             'date': date,
             'ndvi_effective': stats.get('ndvi_effective'),
             'cloud_pc': cloud_pc,
@@ -53,20 +52,20 @@ def process_image(image):
     
     return allPaddocks.map(calculate_paddock_stats)
 
-# Flatten results
+# Flatten and clean
 results = collection.map(process_image).flatten()
 results = results.filter(ee.Filter.notNull(['ndvi_effective']))
 
 # 3. EXPORT TO GCS
-# Added 'map_id' to the selectors
 task = ee.batch.Export.table.toCloudStorage(
     collection=results,
-    description='Paddock_NDVI_With_MapID',
+    description='Paddock_NDVI_Final',
     bucket='ndvi-exports',
     fileNamePrefix='ndvi_data',
     fileFormat='CSV',
-    selectors=['paddock_name', 'date', 'ndvi_effective', 'cloud_pc', 'latest-update', 'map_id']
+    # 'name' is now the first column to match your paddock identification
+    selectors=['name', 'date', 'ndvi_effective', 'cloud_pc', 'latest-update', 'map_id']
 )
 
 task.start()
-print("🚀 Export started. New MapIDs will be included for each date.")
+print("🚀 Export started. Using 'name' for paddock identification.")
