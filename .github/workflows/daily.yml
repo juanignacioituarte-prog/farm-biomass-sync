@@ -38,18 +38,18 @@ jobs:
         run: |
           echo "Monitoring GCS for the new export..."
           python -c "
-          import time, os
+          import time
           from google.cloud import storage
           client = storage.Client()
           bucket = client.bucket('ndvi-exports')
           blob = bucket.blob('ndvi_data.csv')
-          # Try for 15 minutes (30 checks * 30 seconds)
+          # Check for up to 15 minutes
           for i in range(30): 
               if blob.exists():
-                  print('✅ File found in GCS!'); break
-              print(f'Attempt {i+1}: Waiting for Earth Engine... (30s)'); time.sleep(30)
+                  print('✅ File ready!'); break
+              print(f'Waiting... ({i*30}s)'); time.sleep(30)
           else:
-              print('❌ Timeout: File not found after 15 minutes'); exit(1)
+              print('❌ Timeout: File not found'); exit(1)
           "
 
       - name: Sync GCS to Google Sheets
