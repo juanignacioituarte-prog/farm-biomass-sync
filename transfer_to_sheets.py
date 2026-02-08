@@ -20,25 +20,25 @@ def run_transfer():
     service = build('sheets', 'v4', credentials=creds)
     bucket = storage_client.bucket(BUCKET_NAME)
 
-    # Wait for GEE file
-    blobs = []
-    for i in range(10):
-        blobs = list(bucket.list_blobs(prefix=FILE_PREFIX))
-        if blobs: break
-        print(f"⏳ Waiting for GEE file (Attempt {i+1}/10)...")
-        time.sleep(30)
-
+    # Search for the CSV
+    blobs = list(bucket.list_blobs(prefix=FILE_PREFIX))
     if not blobs:
-        print("❌ No files found in bucket.")
+        print("❌ No CSV found in bucket.")
         return
 
     for blob in blobs:
         print(f"Reading {blob.name}...")
         df = pd.read_csv(io.BytesIO(blob.download_as_bytes()))
 
-        # Fix column name if it came from GEE as 'ndvi_effective'
-        if 'ndvi_effective' in df.columns and 'ndvi_mean' not in df.columns:
+        # --- FIX: COLUMN MAPPING ---
+        # If GEE sent it as 'ndvi_effective', rename it to 'ndvi_mean'
+        if 'ndvi_effective' in df.columns:
             df = df.rename(columns={'ndvi_effective': 'ndvi_mean'})
+        
+        # Check if we actually have the column now
+        if 'ndvi_mean' not in df.columns:
+            print(f"❌ Error: Could not find NDVI column. Found: {df.columns.tolist()}")
+            continue
 
         # Deduplication logic
         try:
@@ -53,10 +53,8 @@ def run_transfer():
         df_new = df[~df['key'].isin(existing_keys)].copy()
 
         if not df_new.empty:
-            # Clean numeric data
             df_new['ndvi_mean'] = pd.to_numeric(df_new['ndvi_mean'], errors='coerce').round(4)
-            
-            # Use columns that match your Sheet headers
+            # Match the order of your Google Sheet columns
             cols = ['paddock_name', 'date', 'ndvi_mean', 'cloud_pc', 'last_update', 'tile_url']
             values = df_new[cols].fillna('').values.tolist()
 
@@ -67,7 +65,7 @@ def run_transfer():
             ).execute()
             print(f"✅ Appended {len(values)} rows.")
         else:
-            print("⏭️ No new records.")
+            print("⏭️ No new records found.")
 
         blob.delete()
 
