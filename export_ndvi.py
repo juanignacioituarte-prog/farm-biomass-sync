@@ -57,30 +57,46 @@ def process_image(image):
 
 results = collection.map(process_image).flatten().filter(ee.Filter.notNull(['ndvi_effective']))
 
-# 4. MAP ID GENERATION
-print("Calculating Map IDs...")
+# 4. MAP ID & TOKEN GENERATION
+print("Calculating Map IDs and Access Tokens...")
 unique_img_ids = ee.List(results.aggregate_array('image_id')).distinct().getInfo()
 
-map_id_dict = {}
+# Dictionary to store the mapping data
+map_data_dict = {}
 viz = {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}
 
 for img_id in unique_img_ids:
     img = ee.Image(f"COPERNICUS/S2_SR_HARMONIZED/{img_id}")
-    map_id_dict[img_id] = img.normalizedDifference(['B8', 'B4']).getMapId(viz)['mapid']
+    map_info = img.normalizedDifference(['B8', 'B4']).getMapId(viz)
+    
+    # Store both the specific token and the full URL template
+    map_data_dict[img_id] = {
+        'map_id': map_info['mapid'],
+        'token': map_info['token'],
+        'tile_url': map_info['tile_fetcher'].url_format
+    }
 
-def attach_map_id(f):
-    return f.set('map_id', ee.Dictionary(map_id_dict).get(f.get('image_id')))
+def attach_map_metadata(f):
+    img_id = f.get('image_id')
+    # Use ee.Dictionary to handle the lookup within the GEE environment
+    meta = ee.Dictionary(map_data_dict).get(img_id)
+    return f.set({
+        'map_id': ee.Dictionary(meta).get('map_id'),
+        'map_token': ee.Dictionary(meta).get('token'),
+        'tile_url': ee.Dictionary(meta).get('tile_url')
+    })
 
-final_results = results.map(attach_map_id)
+final_results = results.map(attach_map_metadata)
 
 # 5. EXPORT & WAIT
 task = ee.batch.Export.table.toCloudStorage(
     collection=final_results,
-    description='NDVI_Daily_Sync',
+    description='NDVI_Daily_Sync_With_Tokens',
     bucket='ndvi-exports',
     fileNamePrefix='ndvi_data',
     fileFormat='CSV',
-    selectors=['name', 'date', 'ndvi_effective', 'cloud_pc', 'latest-update', 'map_id']
+    # Added map_token and tile_url to the selectors
+    selectors=['name', 'date', 'ndvi_effective', 'cloud_pc', 'latest-update', 'map_id', 'map_token', 'tile_url']
 )
 
 task.start()
@@ -92,7 +108,7 @@ while task.active():
     print(f"⏳ Status: {status}")
 
 if task.status()['state'] == 'COMPLETED':
-    print("✅ Export complete. CSV is ready in GCS.")
+    print("✅ Export complete. CSV with Map Tokens is ready in GCS.")
 else:
     print(f"❌ Export failed: {task.status().get('error_message')}")
     exit(1)
