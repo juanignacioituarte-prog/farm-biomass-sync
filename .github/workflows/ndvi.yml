@@ -3,13 +3,11 @@ name: Farm NDVI Sync
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 18 * * *'
+    - cron: '0 18 * * *' # Runs daily at 7 AM NZ Time
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write  # Allows the bot to push the CSV to your repo
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v3
@@ -17,21 +15,27 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.9'
+          python-version: '3.10' # Upgraded to fix "End of Life" warnings
 
       - name: Install Dependencies
-        run: pip install earthengine-api requests pandas
+        run: |
+          pip install earthengine-api requests pandas google-cloud-storage google-api-python-client google-auth-oauthlib
 
       - name: Create Service Account Key
-        run: echo '${{ secrets.GEE_JSON }}' > service-account.json
+        # Using a multi-line pipe and shell quoting to ensure the JSON is written correctly
+        run: |
+          cat <<EOF > service-account.json
+          ${{ secrets.GEE_JSON }}
+          EOF
+          
+          # Basic validation: Check if file is larger than 100 bytes
+          if [ $(stat -c%s "service-account.json") -lt 100 ]; then
+            echo "Error: service-account.json is empty or too small. Check GEE_JSON secret."
+            exit 1
+          fi
 
-      - name: Run Analysis
+      - name: Step 1 - GEE Analysis
         run: python fetch_ndvi.py
 
-      - name: Commit and Push CSV
-        run: |
-          git config --global user.name "FarmBot"
-          git config --global user.email "bot@farm.com"
-          git add paddocks_ndvi.csv
-          git commit -m "Update NDVI data: $(date)" || exit 0
-          git push
+      - name: Step 2 - Sheets Transfer
+        run: python transfer_to_sheets.py
