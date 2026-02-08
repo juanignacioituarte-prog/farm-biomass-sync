@@ -1,87 +1,59 @@
-import os
 import pandas as pd
-import time
-from datetime import datetime
 from google.cloud import storage
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
-from googleapiclient.errors import HttpError
+import io
 
-# Configuration
-SHEET_ID = "1yGxWBMOLbWrzxwyMum3UgQkQdkAMra2PlQPBd8eIA04"
-SHEET_NAME = "NDVI_Database"  # Updated tab name
-BUCKET_NAME = "ndvi-exports" 
-FILE_NAME = "latest_biomass.csv"
+# Setup Credentials
+SERVICE_ACCOUNT_FILE = 'service-account.json'
+BUCKET_NAME = 'ndvi-exports'
+FILE_NAME = 'ndvi_data.csv'
+SPREADSHEET_ID = 'yGxWBMOLbWrzxwyMum3UgQkQdkAMra2PlQPBd8eIA04' # Change this!
+RANGE_NAME = 'NDVI_Database!A1'
 
-def execute_with_retry(request, max_retries=5):
-    retry_count = 0
-    backoff = 2 
-    while retry_count < max_retries:
-        try:
-            return request.execute()
-        except HttpError as e:
-            if e.resp.status in [500, 502, 503, 504] and retry_count < max_retries - 1:
-                print(f"⚠️ Google API error. Retrying in {backoff}s...")
-                time.sleep(backoff)
-                retry_count += 1
-                backoff *= 2
-            else:
-                raise e
+creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE)
 
-def main():
-    try:
-        # 1. Setup Auth
-        print("🔐 Authenticating...")
-        creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "service-account.json")
-        creds = service_account.Credentials.from_service_account_file(creds_path)
-        
-        # 2. Download from GCS
-        print(f"✅ Downloading from Bucket: {BUCKET_NAME}")
-        storage_client = storage.Client(credentials=creds)
-        bucket = storage_client.bucket(BUCKET_NAME)
-        blob = bucket.blob(FILE_NAME)
-        blob.download_to_filename(FILE_NAME)
+def run_transfer():
+    # 1. Download from GCS
+    storage_client = storage.Client.from_service_account_json(SERVICE_ACCOUNT_FILE)
+    bucket = storage_client.bucket(BUCKET_NAME)
+    blob = bucket.blob(FILE_NAME)
+    content = blob.download_as_bytes()
+    
+    df = pd.read_csv(io.BytesIO(content))
+    
+    # 2. Fix the Index/Column Issue
+    print(f"Columns found: {df.columns.tolist()}")
+    
+    # Standardize column names (stripping whitespace/lowering case)
+    df.columns = [c.strip().lower() for c in df.columns]
+    
+    if 'date' not in df.columns:
+        # If EE exported it as 'system:index' or something else, handle it:
+        print("⚠️ 'date' column missing. Attempting to recover...")
+        if 'system:index' in df.columns:
+            df.rename(columns={'system:index': 'date'}, inplace=True)
+        else:
+            raise KeyError(f"Could not find 'date' column. Available: {df.columns}")
 
-        # 3. Read and format CSV
-        df = pd.read_csv(FILE_NAME)
-        
-        # Ensure the columns are in the correct order
-        # (Assuming your CSV has these exact column headers)
-        cols_to_keep = ['paddock_name', 'date', 'ndvi_effective', 'cloud_pc']
-        df = df[cols_to_keep]
+    # Ensure 'date' is first for clean Sheets viewing
+    cols = ['date'] + [c for c in df.columns if c != 'date']
+    df = df[cols].sort_values('date')
 
-        # Add the 'Latest Update' timestamp as the 5th column
-        sync_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        df['last_updated'] = sync_time
-
-        # Convert to list for Sheets (Exclude headers to prevent duplicates in the rows)
-        new_data = df.values.tolist()
-
-        # 4. APPEND to Google Sheets
-        service = build('sheets', 'v4', credentials=creds)
-        sheet = service.spreadsheets()
-
-        print(f"📊 Appending {len(new_data)} rows to {SHEET_NAME}...")
-        
-        # .append() finds the next available empty row automatically
-        append_req = sheet.values().append(
-            spreadsheetId=SHEET_ID,
-            range=f"{SHEET_NAME}!A1",
-            valueInputOption="USER_ENTERED", 
-            insertDataOption="INSERT_ROWS",
-            body={'values': new_data}
-        )
-        execute_with_retry(append_req)
-
-        print(f"🚀 Sync Complete! All data appended successfully.")
-
-        # Clean up the local file on the runner
-        if os.path.exists(FILE_NAME):
-            os.remove(FILE_NAME)
-
-    except Exception as e:
-        print(f"❌ Error: {str(e)}")
-        exit(1)
+    # 3. Upload to Google Sheets
+    service = build('sheets', 'v4', credentials=creds)
+    values = df.values.tolist()
+    # Add headers if sheet is empty (simplified for this example)
+    body = {'values': [df.columns.tolist()] + values}
+    
+    service.spreadsheets().values().append(
+        spreadsheetId=SPREADSHEET_ID,
+        range=RANGE_NAME,
+        valueInputOption='RAW',
+        body=body
+    ).execute()
+    
+    print("✅ Successfully appended data to Google Sheets!")
 
 if __name__ == "__main__":
-    main()
+    run_transfer()
