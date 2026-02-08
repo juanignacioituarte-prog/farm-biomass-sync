@@ -3,7 +3,7 @@ name: Farm NDVI Sync
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 18 * * *' # Runs daily at 7 AM NZ Time
+    - cron: '0 18 * * *' # Runs daily (approx. 7 AM NZ Time)
 
 jobs:
   build:
@@ -15,23 +15,32 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.10' # Upgraded to fix "End of Life" warnings
+          python-version: '3.10'
 
       - name: Install Dependencies
         run: |
           pip install earthengine-api requests pandas google-cloud-storage google-api-python-client google-auth-oauthlib
 
-     - name: Create Service Account Key
-        # We tell the script to look for EE_KEY instead of GEE_JSON
+      - name: Create Service Account Key
+        env:
+          # Mapping your specific secret name to a variable
+          MY_GEE_SECRET: ${{ secrets.EE_KEY }}
         run: |
-          echo "${{ secrets.EE_KEY }}" > service-account.json
-          
-          # Validation check
-          if [ $(stat -c%s "service-account.json") -lt 100 ]; then
-            echo "Error: service-account.json is empty. Check if EE_KEY is set correctly."
+          if [ -z "$MY_GEE_SECRET" ]; then
+            echo "❌ ERROR: EE_KEY secret is missing in GitHub Settings!"
             exit 1
           fi
-          echo "✅ service-account.json created successfully."
+          
+          # Write the secret to the file
+          echo "$MY_GEE_SECRET" > service-account.json
+          
+          # Final validation of the file content
+          SIZE=$(stat -c%s "service-account.json")
+          if [ "$SIZE" -lt 100 ]; then
+            echo "❌ ERROR: service-account.json is too small ($SIZE bytes). Key might be invalid."
+            exit 1
+          fi
+          echo "✅ service-account.json created successfully ($SIZE bytes)."
 
       - name: Step 1 - GEE Analysis
         run: python fetch_ndvi.py
