@@ -19,12 +19,12 @@ def run_transfer():
     blob = bucket.blob(FILE_NAME)
     
     if not blob.exists():
-        print("❌ CSV not found.")
+        print("❌ CSV not found in GCS.")
         return
 
     df = pd.read_csv(io.BytesIO(blob.download_as_bytes()))
 
-    # Deduplication Logic
+    # Deduplication logic (using paddock_name and date)
     try:
         sheet_data = service.spreadsheets().values().get(
             spreadsheetId=SPREADSHEET_ID, range="NDVI_Database!A:B"
@@ -37,11 +37,9 @@ def run_transfer():
     df_new = df[~df['key'].isin(existing_keys)].copy()
 
     if df_new.empty:
-        print("⏭️ No new paddock data.")
+        print("⏭️ No new records.")
     else:
-        # Round NDVI and format link
         df_new['ndvi_mean'] = pd.to_numeric(df_new['ndvi_mean'], errors='coerce').round(4)
-        
         cols = ['paddock_name', 'date', 'ndvi_mean', 'cloud_pc', 'last_update', 'tile_url', 'map_token']
         values = df_new[cols].fillna('').values.tolist()
 
@@ -52,7 +50,7 @@ def run_transfer():
             insertDataOption='INSERT_ROWS',
             body={'values': values}
         ).execute()
-        print(f"✅ Appended {len(values)} paddock records.")
+        print(f"✅ Appended {len(values)} rows.")
 
     blob.delete()
 
