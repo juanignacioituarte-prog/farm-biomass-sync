@@ -1,15 +1,14 @@
-name: NDVI Daily Export
+name: NDVI Daily Paddock Sync
 
 on:
   schedule:
-    # Runs at 06:00 UTC every day
-    - cron: "0 6 * * *"
-  workflow_dispatch:
+    - cron: "0 6 * * *" # Runs daily at 6 AM UTC
+  workflow_dispatch: # Allows you to run it manually for testing
 
 jobs:
   sync_paddocks:
     runs-on: ubuntu-latest
-    timeout-minutes: 60  # Increased timeout slightly as MapID generation can be slow
+    timeout-minutes: 45 # Increased to allow for MapID generation
     
     steps:
       - name: Checkout Repository
@@ -19,7 +18,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip' # Speeds up subsequent runs by caching dependencies
+          cache: 'pip'
 
       - name: Install dependencies
         run: |
@@ -29,17 +28,16 @@ jobs:
       - name: Create Service Account Key
         run: echo '${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}' > service-account.json
 
-      - name: Step 1 - Earth Engine Export to GCS
+      - name: Step 1 - Export Paddock Data (Earth Engine)
         env:
           GOOGLE_APPLICATION_CREDENTIALS: service-account.json
         run: python export_ndvi.py
 
-      - name: Step 2 - Sync GCS to Google Sheets
+      - name: Step 2 - Sync to Google Sheets
         env:
           GOOGLE_APPLICATION_CREDENTIALS: service-account.json
         run: python gcs_to_sheets.py
 
-      # Optional: Clean up the key after run for security
-      - name: Cleanup Key
+      - name: Cleanup
         if: always()
         run: rm -f service-account.json
