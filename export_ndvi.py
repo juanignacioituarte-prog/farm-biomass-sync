@@ -7,11 +7,10 @@ with open(service_account_path) as f:
     credentials = json.load(f)
 ee.Initialize(ee.ServiceAccountCredentials(credentials['client_email'], service_account_path))
 
-# 1. LOAD YOUR ASSET
+# 1. LOAD ASSET
 allPaddocks = ee.FeatureCollection('projects/ndvi-project-484422/assets/myfarm_paddocks')
 
-# 2. SET UP DATA COLLECTION
-# Fetching the last 14 days
+# 2. SET UP COLLECTION
 start_date = ee.Date(ee.Date.fromYMD(2026, 2, 8).advance(-14, 'day'))
 end_date = ee.Date.fromYMD(2026, 2, 8)
 
@@ -20,52 +19,71 @@ collection = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
               .filterDate(start_date, end_date)
               .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 30)))
 
-def process_image(image):
+# --- STEP A: CALCULATE NDVI (SERVER SIDE) ---
+def calculate_ndvi_stats(image):
     date = image.date().format('YYYY-MM-DD')
     cloud_pc = image.get('CLOUDY_PIXEL_PERCENTAGE')
-    update_time = ee.Date(image.get('system:time_start')).format('YYYY-MM-DD HH:mm')
+    update_time = image.date().format('YYYY-MM-DD HH:mm')
     
-    # Calculate NDVI
     ndvi_img = image.normalizedDifference(['B8', 'B4']).rename('ndvi_effective')
     
-    # Generate MapID for visualization
-    viz_params = {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}
-    map_info = ndvi_img.getMapId(viz_params)
-    current_map_id = map_info['mapid']
-    
-    def calculate_paddock_stats(feature):
+    # Add NDVI image to the feature so we can access it later if needed, 
+    # but for now, just map over paddocks
+    def stats_per_paddock(paddock):
         stats = ndvi_img.reduceRegion(
             reducer=ee.Reducer.mean(),
-            geometry=feature.geometry(),
+            geometry=paddock.geometry(),
             scale=10,
             maxPixels=1e9
         )
-        
-        return feature.set({
-            'name': feature.get('name'), # Updated to match your asset's 'name' property
+        return paddock.set({
             'date': date,
             'ndvi_effective': stats.get('ndvi_effective'),
             'cloud_pc': cloud_pc,
             'latest-update': update_time,
-            'map_id': current_map_id
+            # We add the IMAGE ID here so we can generate MapIDs later
+            'image_id': image.id()
         })
     
-    return allPaddocks.map(calculate_paddock_stats)
+    return allPaddocks.map(stats_per_paddock)
 
-# Flatten and clean
-results = collection.map(process_image).flatten()
+results = collection.map(calculate_ndvi_stats).flatten()
 results = results.filter(ee.Filter.notNull(['ndvi_effective']))
 
-# 3. EXPORT TO GCS
+# --- STEP B: GENERATE MAP IDs (CLIENT SIDE) ---
+# Since we can't do this inside the map, we have to get the list of unique image IDs
+# This part stays efficient by only getting the IDs, not the whole data.
+print("Calculating Map IDs...")
+unique_images = collection.toList(collection.size())
+image_list = unique_images.getInfo() # Client-side call
+
+map_id_dict = {}
+viz_params = {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}
+
+for img_info in image_list:
+    img = ee.Image(img_info['id'])
+    # Re-calculate NDVI for the MapID
+    ndvi_layer = img.normalizedDifference(['B8', 'B4'])
+    map_id_dict[img_info['id']] = ndvi_layer.getMapId(viz_params)['mapid']
+
+# --- STEP C: ATTACH MAP IDs TO RESULTS ---
+def attach_map_id(feature):
+    img_id = feature.get('image_id')
+    # Use an Earth Engine dictionary to map the IDs back
+    ee_map_dict = ee.Dictionary(map_id_dict)
+    return feature.set('map_id', ee_map_dict.get(img_id))
+
+final_results = results.map(attach_map_id)
+
+# 3. EXPORT
 task = ee.batch.Export.table.toCloudStorage(
-    collection=results,
-    description='Paddock_NDVI_Final',
+    collection=final_results,
+    description='Paddock_NDVI_MapID_Fixed',
     bucket='ndvi-exports',
     fileNamePrefix='ndvi_data',
     fileFormat='CSV',
-    # 'name' is now the first column to match your paddock identification
     selectors=['name', 'date', 'ndvi_effective', 'cloud_pc', 'latest-update', 'map_id']
 )
 
 task.start()
-print("🚀 Export started. Using 'name' for paddock identification.")
+print("🚀 Fixed Export started. MapIDs generated correctly.")
