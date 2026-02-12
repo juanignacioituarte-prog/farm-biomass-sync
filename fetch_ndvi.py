@@ -3,8 +3,21 @@ import requests
 import pandas as pd
 from datetime import datetime, timedelta
 
-# Initialize Earth Engine
-ee.Initialize()
+# --- AUTHENTICATION UPDATE ---
+# This uses the credentials.json created by your GitHub Action
+try:
+    # Try to initialize with the service account key file
+    ee_creds = ee.ServiceAccountCredentials(
+        'farm-monitor-service-account@ndvi-project-484422.iam.gserviceaccount.com', # Replace with your SA Email
+        'credentials.json'
+    )
+    ee.Initialize(ee_creds)
+    print("✅ Earth Engine initialized with Service Account.")
+except Exception as e:
+    print(f"❌ EE Initialization Failed: {e}")
+    # Fallback for local testing if you have gcloud installed
+    ee.Initialize() 
+# -----------------------------
 
 # 1. Setup Dates
 end_date = datetime.now()
