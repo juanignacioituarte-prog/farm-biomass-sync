@@ -36,23 +36,19 @@ collection = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
 
 # 4. PROCESSING
 def process_image(image):
-    # Get the date object
-    ee_date = image.date()
+    img_date = image.date()
     
-    # Explicitly get year, month, and day as numbers, then format them
-    # This bypasses the Joda-Time .format() pattern matching issues
-    year = ee_date.get('year').format('%d')
-    month = ee_date.get('month').format('%02d')
-    day = ee_date.get('day').format('%02d')
+    # FIX: Explicit date extraction to prevent "Day 37" error
+    year = img_date.get('year').format('%d')
+    month = img_date.get('month').format('%02d')
+    day = img_date.get('day').format('%02d') 
     
     date_str = ee.String(year).cat('-').cat(month).cat('-').cat(day)
     
-    # For the timestamp, we can use a similar concatenation if needed
-    hour = ee_date.get('hour').format('%02d')
-    minute = ee_date.get('minute').format('%02d')
+    hour = img_date.get('hour').format('%02d')
+    minute = img_date.get('minute').format('%02d')
     update_time = date_str.cat(' ').cat(hour).cat(':').cat(minute)
     
-    # ... rest of your code ...
     cloud_pc = image.get('CLOUDY_PIXEL_PERCENTAGE')
     img_id = image.id()
     ndvi_img = image.normalizedDifference(['B8', 'B4']).rename('ndvi_effective')
@@ -66,7 +62,6 @@ def process_image(image):
         )
         return ee.Feature(None, {
             'paddock_name': paddock.get('name'), 
-            # Use the concatenated strings here
             'date': date_str,
             'ndvi_effective': stats.get('ndvi_effective'),
             'cloud_pc': cloud_pc,
@@ -75,7 +70,11 @@ def process_image(image):
         })
     return allPaddocks.map(stats_per_paddock)
 
+# Ensure this line is NOT indented inside the process_image function
+results_fc = collection.map(process_image).flatten().filter(ee.Filter.notNull(['ndvi_effective']))
+
 # 5. TILE URLS
+# We check if results_fc has data before calling getInfo() to avoid empty list errors
 unique_ids = ee.List(results_fc.aggregate_array('image_id')).distinct().getInfo()
 map_metadata = {}
 viz = {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}
