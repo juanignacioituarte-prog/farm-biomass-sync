@@ -3,7 +3,7 @@ name: Farm NDVI Sync
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 18 * * *' # Runs daily (approx. 7 AM NZ Time)
+    - cron: '0 18 * * *'
 
 jobs:
   build:
@@ -25,14 +25,9 @@ jobs:
         env:
           GCP_KEY: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
         run: |
-          # Creating credentials.json for use by both EE and Google Sheets
           echo "$GCP_KEY" > credentials.json
-          echo "✅ credentials.json created successfully."
 
-      - name: Step 1 - GEE Analysis (Last 21 Days)
-        # This environment variable helps some Google libraries find the key automatically
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: credentials.json
+      - name: Step 1 - GEE Analysis
         run: python fetch_ndvi.py
 
       - name: Step 2 - Sync to Google Sheets
