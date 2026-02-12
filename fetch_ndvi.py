@@ -11,106 +11,79 @@ with open('credentials.json') as f:
 
 auth = ee.ServiceAccountCredentials(service_account_email, 'credentials.json')
 ee.Initialize(auth)
-print(f"✅ Authenticated as {service_account_email}")
 
 # 1. Setup Dates
 end_date = datetime.now()
 start_date = end_date - timedelta(days=21)
 
-# 2. Load Shapes from GeoJSON
+# 2. Load Shapes
 GEOJSON_URL = "https://storage.googleapis.com/ndvi-exports/paddocks.geojson"
 resp = requests.get(GEOJSON_URL)
 paddocks = ee.FeatureCollection(resp.json())
 
-# 3. Sentinel‑2 collection
+# 3. Get Latest Image
 s2_col = (
     ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
     .filterBounds(paddocks)
     .filterDate(start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
     .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40))
+    .sort('system:time_start', False)
 )
 
-# --- ANALYSIS PER IMAGE ---
-def analyze_collection(image):
-    img_ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI')
-    img_date = image.date().format('dd/MM/yyyy')
-    cloud_pc = image.get('CLOUDY_PIXEL_PERCENTAGE')
-    image_id = image.get('system:index')
+latest_image = s2_col.first()
+img_date = latest_image.date().format('dd/MM/yyyy').getInfo()
+cloud_pc = latest_image.get('CLOUDY_PIXEL_PERCENTAGE').getInfo()
+img_ndvi = latest_image.normalizedDifference(['B8', 'B4']).rename('NDVI')
 
-    def process_paddocks(paddock):
-        stats = img_ndvi.reduceRegion(
-            reducer=ee.Reducer.mean().combine(
-                reducer2=ee.Reducer.percentile([10, 90]),
-                sharedInputs=True
-            ),
-            geometry=paddock.geometry(),
-            scale=10
-        )
+# 4. Analysis
+def process_paddocks(paddock):
+    geom = paddock.geometry()
+    area = geom.area().divide(10000)
+    
+    stats = img_ndvi.reduceRegion(
+        reducer=ee.Reducer.mean().combine(
+            reducer2=ee.Reducer.percentile([10, 90]),
+            sharedInputs=True
+        ),
+        geometry=geom,
+        scale=10
+    )
 
-        p10 = ee.Number(stats.get('NDVI_p10'))
-        p90 = ee.Number(stats.get('NDVI_p90'))
-        spread = p90.subtract(p10)
+    p10 = ee.Number(stats.get('NDVI_p10'))
+    p90 = ee.Number(stats.get('NDVI_p90'))
+    spread = p90.subtract(p10)
 
-        # Correct boolean logic
-        is_partial = (
-            spread.gt(0.16)
-            .And(p90.gt(0.78))
-            .And(p10.lt(0.72))
-        )
+    # Detection logic
+    is_partial = spread.gt(0.16).And(p90.gt(0.78)).And(p10.lt(0.72))
 
-        return paddock.set({
-            'paddock_name': paddock.get('name'),
-            'ndvi_mean': stats.get('NDVI_mean'),
-            'cloud_pc': cloud_pc,
-            'is_partial': is_partial,
-            'date': img_date,
-            'image_id': image_id
-        })
+    return paddock.set({
+        'paddock_name': paddock.get('name'),
+        'ndvi_mean': stats.get('NDVI_mean'),
+        'is_partial': is_partial,
+        'area_ha': area
+    })
 
-    return paddocks.map(process_paddocks)
+analyzed_features = paddocks.map(process_paddocks).getInfo()
 
-# Flatten results
-all_results = s2_col.map(analyze_collection).flatten()
-
-# --- Pull results to Python ---
-full_list = all_results.sort('system:time_start', False).getInfo()
-
-# --- Build tile URLs in Python ---
+# 5. Build Tile URL
 viz = {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}
-tile_cache = {}
+tile_url = img_ndvi.getMapId(viz)['tile_fetcher'].url_format
 
-def get_tile_url(image_id):
-    if image_id in tile_cache:
-        return tile_cache[image_id]
-
-    img = ee.Image(f"COPERNICUS/S2_SR_HARMONIZED/{image_id}")
-    ndvi = img.normalizedDifference(['B8', 'B4'])
-    map_info = ndvi.getMapId(viz)
-    url = map_info['tile_fetcher'].url_format
-    tile_cache[image_id] = url
-    return url
-
-# --- Build CSV rows ---
+# 6. Generate Exports
 rows = []
 partial_rows = []
 
-for f in full_list['features']:
+for f in analyzed_features['features']:
     p = f['properties']
-    tile_url = get_tile_url(p['image_id'])
+    
+    # ALWAYS add to main rows (regardless of size)
+    rows.append([p['paddock_name'], img_date, p['ndvi_mean'], cloud_pc, tile_url, "", ""])
 
-    rows.append([
-        p['paddock_name'],
-        p['date'],
-        p['ndvi_mean'],
-        p['cloud_pc'],
-        tile_url
-    ])
-
-    if p['is_partial'] == 1:
+    # ONLY add to partial sheet if detected AND > 3ha
+    if p['is_partial'] == 1 and p['area_ha'] > 3.0:
         partial_rows.append([p['paddock_name'], 'Partial'])
 
-# Save CSVs
+# Save
 pd.DataFrame(rows).to_csv('ndvi_data.csv', index=False, header=False)
 pd.DataFrame(partial_rows).to_csv('partial.csv', index=False, header=False)
-
-print("Tile URLs added successfully.")
+print(f"Done. {len(rows)} paddocks updated. {len(partial_rows)} flagged as partial (>3ha).")
