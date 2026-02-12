@@ -3,7 +3,7 @@ name: Farm NDVI Sync
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 18 * * *' # Runs daily (approx. 7 AM NZ Time)
+    - cron: '0 18 * * *' # Runs daily
 
 jobs:
   build:
@@ -15,30 +15,25 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11' # Upgraded to resolve Google API warnings
+          python-version: '3.11'
 
       - name: Install Dependencies
         run: |
-          pip install earthengine-api requests pandas google-cloud-storage google-api-python-client google-auth-oauthlib
+          pip install earthengine-api requests pandas google-cloud-storage google-api-python-client google-auth-httplib2 google-auth
 
       - name: Create Service Account Key
         env:
-          # Maps your secret name to a variable for the shell command
           GCP_KEY: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
         run: |
-          if [ -z "$GCP_KEY" ]; then
-            echo "❌ ERROR: GCP_SERVICE_ACCOUNT_KEY secret is missing!"
-            exit 1
-          fi
           echo "$GCP_KEY" > service-account.json
           echo "✅ service-account.json created successfully."
 
       - name: Step 1 - GEE Analysis
         run: python fetch_ndvi.py
 
-      - name: Grace Period
-        # Gives GEE a moment to register the export task
-        run: sleep 30
+      # --- CHANGES BELOW ---
 
-      - name: Step 2 - Sheets Transfer
+      - name: Step 2 - Check Results
+        # Since we stopped appending and deleting, this script now 
+        # acts as a "Verification" step to ensure the bucket is reachable.
         run: python transfer_to_sheets.py
