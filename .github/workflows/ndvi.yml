@@ -3,7 +3,7 @@ name: Farm NDVI Sync
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 18 * * *' # Runs daily
+    - cron: '0 18 * * *' # Runs daily (approx. 7 AM NZ Time)
 
 jobs:
   build:
@@ -19,7 +19,7 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install earthengine-api requests pandas google-cloud-storage google-api-python-client google-auth-httplib2 google-auth
+          pip install earthengine-api requests pandas google-cloud-storage google-api-python-client google-auth
 
       - name: Create Service Account Key
         env:
@@ -29,11 +29,10 @@ jobs:
           echo "✅ service-account.json created successfully."
 
       - name: Step 1 - GEE Analysis
+        # This triggers the satellite processing for today's data
         run: python fetch_ndvi.py
 
-      # --- CHANGES BELOW ---
-
-      - name: Step 2 - Check Results
-        # Since we stopped appending and deleting, this script now 
-        # acts as a "Verification" step to ensure the bucket is reachable.
+      - name: Step 2 - Sync Bucket to Sheets
+        # This script now scans the bucket, skips duplicates, and appends to Sheets.
+        # It does NOT delete the CSV files.
         run: python transfer_to_sheets.py
