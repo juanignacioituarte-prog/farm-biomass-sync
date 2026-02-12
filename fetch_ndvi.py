@@ -30,23 +30,12 @@ s2_col = (
     .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40))
 )
 
-# --- ADD TILE URL TO EACH IMAGE ---
-viz = {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}
-
-def add_tile_url(image):
-    ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI')
-    map_info = ndvi.getMapId(viz)
-    tile_url = ee.String(map_info.get('tile_fetcher').get('url_format'))
-    return image.set('tile_url', tile_url)
-
-s2_with_tiles = s2_col.map(add_tile_url)
-
 # --- ANALYSIS PER IMAGE ---
 def analyze_collection(image):
     img_ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI')
     img_date = image.date().format('dd/MM/yyyy')
     cloud_pc = image.get('CLOUDY_PIXEL_PERCENTAGE')
-    tile_url = image.get('tile_url')
+    image_id = image.get('system:index')
 
     def process_paddocks(paddock):
         stats = img_ndvi.reduceRegion(
@@ -70,38 +59,53 @@ def analyze_collection(image):
             'cloud_pc': cloud_pc,
             'is_partial': is_partial,
             'date': img_date,
-            'tile_url': tile_url
+            'image_id': image_id
         })
 
     return paddocks.map(process_paddocks)
 
 # Flatten results
-all_results = s2_with_tiles.map(analyze_collection).flatten()
+all_results = s2_col.map(analyze_collection).flatten()
 
-# 4. partial.csv
-partial_detections = all_results.filter(ee.Filter.eq('is_partial', 1)).getInfo()
-unique_partials = {}
-
-for f in partial_detections['features']:
-    name = f['properties']['paddock_name']
-    unique_partials[name] = 'Partial'
-
-pd.DataFrame(unique_partials.items()).to_csv('partial.csv', index=False, header=False)
-
-# 5. ndvi_data.csv (now includes tile_url)
+# --- Pull results to Python ---
 full_list = all_results.sort('system:time_start', False).getInfo()
+
+# --- Build tile URLs in Python ---
+viz = {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}
+tile_cache = {}
+
+def get_tile_url(image_id):
+    if image_id in tile_cache:
+        return tile_cache[image_id]
+
+    img = ee.Image(f"COPERNICUS/S2_SR_HARMONIZED/{image_id}")
+    ndvi = img.normalizedDifference(['B8', 'B4'])
+    map_info = ndvi.getMapId(viz)
+    url = map_info['tile_fetcher'].url_format
+    tile_cache[image_id] = url
+    return url
+
+# --- Build CSV rows ---
 rows = []
+partial_rows = []
 
 for f in full_list['features']:
     p = f['properties']
+    tile_url = get_tile_url(p['image_id'])
+
     rows.append([
         p['paddock_name'],
         p['date'],
         p['ndvi_mean'],
         p['cloud_pc'],
-        p['tile_url']  # <-- NEW
+        tile_url
     ])
 
-pd.DataFrame(rows).to_csv('ndvi_data.csv', index=False, header=False)
+    if p['is_partial'] == 1:
+        partial_rows.append([p['paddock_name'], 'Partial'])
 
-print("Tile URLs included. NDVI sync complete.")
+# Save CSVs
+pd.DataFrame(rows).to_csv('ndvi_data.csv', index=False, header=False)
+pd.DataFrame(partial_rows).to_csv('partial.csv', index=False, header=False)
+
+print("Tile URLs added successfully.")
