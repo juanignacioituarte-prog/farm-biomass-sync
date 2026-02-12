@@ -36,7 +36,6 @@ def analyze_collection(image):
     cloud_pc = image.get('CLOUDY_PIXEL_PERCENTAGE')
 
     def process_paddocks(paddock):
-        # Combined reducer: mean + percentiles
         stats = img_ndvi.reduceRegion(
             reducer=ee.Reducer.mean().combine(
                 reducer2=ee.Reducer.percentile([10, 90]),
@@ -46,17 +45,15 @@ def analyze_collection(image):
             scale=10
         )
 
-        # Correct reducer output keys
         p10 = ee.Number(stats.get('NDVI_p10'))
         p90 = ee.Number(stats.get('NDVI_p90'))
         spread = p90.subtract(p10)
 
-        # Detection logic
         is_partial = spread.gt(0.16).And(p90.gt(0.78)).And(p10.lt(0.72))
 
         return paddock.set({
             'paddock_name': paddock.get('name'),
-            'ndvi_mean': stats.get('NDVI_mean'),   # <-- FIXED
+            'ndvi_mean': stats.get('NDVI_mean'),
             'cloud_pc': cloud_pc,
             'is_partial': is_partial,
             'date': img_date
@@ -67,10 +64,10 @@ def analyze_collection(image):
 # Flatten the collection of features into one list
 all_results = s2_col.map(analyze_collection).flatten()
 
-# 4. Generate partial.csv (Last 21 days detections)
+# 4. Generate partial.csv
 partial_detections = all_results.filter(ee.Filter.eq('is_partial', 1)).getInfo()
-
 unique_partials = {}
+
 for f in partial_detections['features']:
     name = f['properties']['paddock_name']
     unique_partials[name] = 'Partial'
@@ -78,10 +75,10 @@ for f in partial_detections['features']:
 partial_rows = [[name, status] for name, status in unique_partials.items()]
 pd.DataFrame(partial_rows).to_csv('partial.csv', index=False, header=False)
 
-# 5. Generate ndvi_data.csv (Latest-first NDVI data)
+# 5. Generate ndvi_data.csv
 full_list = all_results.sort('system:time_start', False).getInfo()
-
 ndvi_rows = []
+
 for f in full_list['features']:
     props = f['properties']
     ndvi_rows.append([
