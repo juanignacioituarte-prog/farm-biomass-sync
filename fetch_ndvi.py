@@ -11,13 +11,13 @@ with open('credentials.json') as f:
 
 auth = ee.ServiceAccountCredentials(service_account_email, 'credentials.json')
 ee.Initialize(auth)
-print(f"✅ Authenticated as {service_account_email}")
+print(f"Authenticated as {service_account_email}")
 
-# 1. Setup Dates
+# 1. Setup Dates (still needed to limit search window)
 end_date = datetime.now()
 start_date = end_date - timedelta(days=21)
 
-# 2. Load Shapes from GeoJSON
+# 2. Load paddocks from GeoJSON (same as JS)
 GEOJSON_URL = "https://storage.googleapis.com/ndvi-exports/paddocks.geojson"
 resp = requests.get(GEOJSON_URL)
 paddocks = ee.FeatureCollection(resp.json())
@@ -28,7 +28,7 @@ s2_col = (
     .filterBounds(paddocks)
     .filterDate(start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
     .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40))
-    .sort('system:time_start', False)   # newest first
+    .sort('system:time_start', False)  # newest first
 )
 
 # --- SELECT ONLY THE LATEST IMAGE ---
@@ -38,11 +38,9 @@ latest_image = s2_col.first()
 def analyze_paddock(paddock):
     img_ndvi = latest_image.normalizedDifference(['B8', 'B4']).rename('NDVI')
 
+    # EXACT SAME REDUCER AS JS
     stats = img_ndvi.reduceRegion(
-        reducer=ee.Reducer.mean().combine(
-            reducer2=ee.Reducer.percentile([10, 90]),
-            sharedInputs=True
-        ),
+        reducer=ee.Reducer.percentile([10, 90]),
         geometry=paddock.geometry(),
         scale=10
     )
@@ -51,11 +49,18 @@ def analyze_paddock(paddock):
     p90 = ee.Number(stats.get('NDVI_p90'))
     spread = p90.subtract(p10)
 
-    is_partial = spread.gt(0.16).And(p90.gt(0.78)).And(p10.lt(0.72))
+    # EXACT SAME LOGIC AS JS
+    is_partial = (
+        spread.gt(0.16)
+        .and(p90.gt(0.78))
+        .and(p10.lt(0.72))
+    )
 
     return paddock.set({
         'paddock_name': paddock.get('name'),
-        'ndvi_mean': stats.get('NDVI_mean'),
+        'p10_val': p10,
+        'p90_val': p90,
+        'ndvi_spread': spread,
         'is_partial': is_partial,
         'date': latest_image.date().format('dd/MM/yyyy'),
         'image_id': latest_image.get('system:index'),
@@ -94,7 +99,7 @@ for f in full_list['features']:
     rows.append([
         p['paddock_name'],
         p['date'],
-        p['ndvi_mean'],
+        p['ndvi_mean'] if 'ndvi_mean' in p else None,
         p['cloud_pc'],
         tile_url
     ])
