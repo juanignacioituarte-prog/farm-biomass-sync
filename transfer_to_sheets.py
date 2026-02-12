@@ -4,9 +4,8 @@ from googleapiclient.discovery import build
 from google.oauth2 import service_account
 
 # --- CONFIGURATION ---
-SERVICE_ACCOUNT_FILE = 'credentials.json' # Must be in your GitHub Secrets/Repo
-# Use your master Google Sheet ID
-SPREADSHEET_ID = '2PACX-1vRBBRftvApfrkHKVQh9FV1qsYVy3Y2whaHKfyAWJ5Ymbc1cTcw7IzB4epF8h_-rN1dxD-N7bdaJyp1V' 
+SERVICE_ACCOUNT_FILE = 'credentials.json'
+SPREADSHEET_ID = '1yGxWBMOLbWrzxwyMum3UgQkQdkAMra2PlQPBd8eIA04'  # <-- FIXED
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 
 # Setup Credentials
@@ -18,13 +17,13 @@ def sync_data():
     """
     Synchronizes both the 21-day NDVI database and the Partial Grazing detections.
     """
-    
+
     # 1. SYNC NDVI DATABASE (Append new records)
     try:
         if os.path.exists('ndvi_data.csv'):
             ndvi_df = pd.read_csv('ndvi_data.csv', header=None)
             ndvi_values = ndvi_df.values.tolist()
-            
+
             if ndvi_values:
                 service.spreadsheets().values().append(
                     spreadsheetId=SPREADSHEET_ID,
@@ -39,16 +38,15 @@ def sync_data():
 
     # 2. SYNC PARTIAL GRAZING (Overwrite/Clear and Update)
     try:
-        # First, clear the existing 'partial' sheet to remove old 21-day detections
         service.spreadsheets().values().clear(
             spreadsheetId=SPREADSHEET_ID,
             range='partial!A:B'
         ).execute()
-        
+
         if os.path.exists('partial.csv') and os.path.getsize('partial.csv') > 0:
             partial_df = pd.read_csv('partial.csv', header=None)
             partial_values = partial_df.values.tolist()
-            
+
             if partial_values:
                 service.spreadsheets().values().update(
                     spreadsheetId=SPREADSHEET_ID,
@@ -59,7 +57,7 @@ def sync_data():
                 print(f"Synced {len(partial_values)} partial grazing detections.")
         else:
             print("No partial grazing events detected in the last 21 days. Sheet cleared.")
-            
+
     except Exception as e:
         print(f"Partial Sync Error: {e}")
 
