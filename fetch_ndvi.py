@@ -1,29 +1,23 @@
 import ee
 import requests
 import pandas as pd
+import json
 from datetime import datetime, timedelta
 
-# --- AUTHENTICATION UPDATE ---
-# This uses the credentials.json created by your GitHub Action
-try:
-    # Try to initialize with the service account key file
-    ee_creds = ee.ServiceAccountCredentials(
-        'farm-monitor-service-account@ndvi-project-484422.iam.gserviceaccount.com', # Replace with your SA Email
-        'credentials.json'
-    )
-    ee.Initialize(ee_creds)
-    print("✅ Earth Engine initialized with Service Account.")
-except Exception as e:
-    print(f"❌ EE Initialization Failed: {e}")
-    # Fallback for local testing if you have gcloud installed
-    ee.Initialize() 
-# -----------------------------
+# --- AUTHENTICATION ---
+with open('credentials.json') as f:
+    cred_data = json.load(f)
+    service_account_email = cred_data['client_email']
+
+auth = ee.ServiceAccountCredentials(service_account_email, 'credentials.json')
+ee.Initialize(auth)
+print(f"✅ Authenticated as {service_account_email}")
 
 # 1. Setup Dates
 end_date = datetime.now()
 start_date = end_date - timedelta(days=21)
 
-# 2. Load Shapes
+# 2. Load Shapes from GeoJSON
 GEOJSON_URL = "https://storage.googleapis.com/ndvi-exports/paddocks.geojson"
 resp = requests.get(GEOJSON_URL)
 paddocks = ee.FeatureCollection(resp.json())
@@ -35,14 +29,18 @@ s2_col = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
           .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40)))
 
 def analyze_collection(image):
-    # Standard NDVI
     img_ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI')
     img_date = image.date().format('dd/MM/yyyy')
     
+    # Cloud check for this specific image to use in biomass adjustment
+    cloud_pc = image.get('CLOUDY_PIXEL_PERCENTAGE')
+    
     def process_paddocks(paddock):
+        # FIXED: Corrected Reducer.combine syntax
+        # Using .combine(reducer2=...) or positional arguments
         stats = img_ndvi.reduceRegion(
             reducer=ee.Reducer.mean().combine(
-                reducer=ee.Reducer.percentile([10, 90]),
+                reducer2=ee.Reducer.percentile([10, 90]),
                 sharedInputs=True
             ),
             geometry=paddock.geometry(),
@@ -59,6 +57,7 @@ def analyze_collection(image):
         return paddock.set({
             'paddock_name': paddock.get('name'),
             'ndvi_mean': stats.get('NDVI'),
+            'cloud_pc': cloud_pc,
             'is_partial': is_partial,
             'date': img_date
         })
@@ -69,24 +68,24 @@ def analyze_collection(image):
 all_results = s2_col.map(analyze_collection).flatten()
 
 # 4. Generate partial.csv (Last 21 days detections)
-# We group by name to see if it was partial AT ANY POINT in the last 21 days
 partial_detections = all_results.filter(ee.Filter.eq('is_partial', 1)).getInfo()
 unique_partials = {}
 for f in partial_detections['features']:
     name = f['properties']['paddock_name']
-    date = f['properties']['date']
-    unique_partials[name] = date # Keeps the most recent date detected
+    unique_partials[name] = 'Partial'
 
-partial_rows = [[name, 'Partial'] for name in unique_partials.keys()]
+partial_rows = [[name, status] for name, status in unique_partials.items()]
 pd.DataFrame(partial_rows).to_csv('partial.csv', index=False, header=False)
 
 # 5. Generate ndvi_data.csv (Standard Latest Only)
-# For the main dashboard, we still only want the single most recent data point per paddock
-latest_data = all_results.sort('system:time_start', False)
-# (Logic to pick only the single latest per paddock name goes here if needed for clean DB)
-# For now, saving all 21 days of history to the DB:
-full_list = all_results.getInfo()
-ndvi_rows = [[f['properties']['paddock_name'], f['properties']['date'], f['properties']['ndvi_mean']] for f in full_list['features']]
+# We sort by date to make sure the latest data is at the top of the CSV
+full_list = all_results.sort('system:time_start', False).getInfo()
+ndvi_rows = []
+for f in full_list['features']:
+    props = f['properties']
+    # Format: Paddock, Date, NDVI, Cloud%
+    ndvi_rows.append([props['paddock_name'], props['date'], props['ndvi_mean'], props['cloud_pc']])
+
 pd.DataFrame(ndvi_rows).to_csv('ndvi_data.csv', index=False, header=False)
 
 print(f"Detections in 21 days: {len(partial_rows)}")
