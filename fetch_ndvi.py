@@ -34,11 +34,11 @@ collection = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
               .filterDate(start_date, end_date)
               .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40)))
 
-# 4. PROCESSING
+# 4. PROCESSING FUNCTION
 def process_image(image):
     img_date = image.date()
     
-    # FIX: Explicit date extraction to prevent "Day 37" error
+    # FORCED DATE LOGIC: Explicitly getting year, month, day to avoid "Day 37" bug
     year = img_date.get('year').format('%d')
     month = img_date.get('month').format('%02d')
     day = img_date.get('day').format('%02d') 
@@ -70,11 +70,11 @@ def process_image(image):
         })
     return allPaddocks.map(stats_per_paddock)
 
-# Ensure this line is NOT indented inside the process_image function
+# --- CRITICAL: results_fc must be defined out here ---
 results_fc = collection.map(process_image).flatten().filter(ee.Filter.notNull(['ndvi_effective']))
 
 # 5. TILE URLS
-# We check if results_fc has data before calling getInfo() to avoid empty list errors
+# We check if there's data before calling getInfo
 unique_ids = ee.List(results_fc.aggregate_array('image_id')).distinct().getInfo()
 map_metadata = {}
 viz = {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}
