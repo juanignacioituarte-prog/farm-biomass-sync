@@ -36,8 +36,13 @@ collection = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
 
 # 4. PROCESSING
 def process_image(image):
-    date_str = image.date().format('YYYY-MM-DD')
-    update_time = image.date().format('YYYY-MM-DD HH:mm')
+    # FIX: Use 'yyyy-MM-dd' for standard dates. 
+    # In GEE/Joda-Time:
+    # 'dd' = Day of month (01-31)
+    # 'D'  = Day of year (1-365) - This was likely causing your "32" and "37"
+    date_str = image.date().format('yyyy-MM-dd')
+    update_time = image.date().format('yyyy-MM-dd HH:mm')
+    
     cloud_pc = image.get('CLOUDY_PIXEL_PERCENTAGE')
     img_id = image.id()
     ndvi_img = image.normalizedDifference(['B8', 'B4']).rename('ndvi_effective')
