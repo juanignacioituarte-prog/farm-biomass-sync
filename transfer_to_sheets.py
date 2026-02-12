@@ -5,7 +5,7 @@ from google.oauth2 import service_account
 
 # --- CONFIGURATION ---
 SERVICE_ACCOUNT_FILE = 'credentials.json'
-SPREADSHEET_ID = '1yGxWBMOLbWrzxwyMum3UgQkQdkAMra2PlQPBd8eIA04'  # <-- FIXED
+SPREADSHEET_ID = '1yGxWBMOLbWrzxwyMum3UgQkQdkAMra2PlQPBd8eIA04'
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 
 # Setup Credentials
@@ -15,7 +15,7 @@ service = build('sheets', 'v4', credentials=creds)
 
 def sync_data():
     """
-    Synchronizes both the 21-day NDVI database and the Partial Grazing detections.
+    Synchronizes the latest-image NDVI dataset and the Partial Grazing detections.
     """
 
     # 1. SYNC NDVI DATABASE (Append new records)
@@ -38,11 +38,13 @@ def sync_data():
 
     # 2. SYNC PARTIAL GRAZING (Overwrite/Clear and Update)
     try:
+        # Clear existing partial detections
         service.spreadsheets().values().clear(
             spreadsheetId=SPREADSHEET_ID,
             range='partial!A:B'
         ).execute()
 
+        # Load new partial detections
         if os.path.exists('partial.csv') and os.path.getsize('partial.csv') > 0:
             partial_df = pd.read_csv('partial.csv', header=None)
             partial_values = partial_df.values.tolist()
@@ -56,7 +58,7 @@ def sync_data():
                 ).execute()
                 print(f"Synced {len(partial_values)} partial grazing detections.")
         else:
-            print("No partial grazing events detected in the last 21 days. Sheet cleared.")
+            print("No partial grazing events detected in the latest image. Sheet cleared.")
 
     except Exception as e:
         print(f"Partial Sync Error: {e}")
