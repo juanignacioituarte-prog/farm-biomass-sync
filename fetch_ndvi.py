@@ -1,104 +1,79 @@
 import ee
-import json
-import time
-import os
 import requests
+import pandas as pd
+from datetime import datetime, timedelta
 
-# 1. AUTHENTICATION
-service_account_path = 'service-account.json'
-if os.path.exists(service_account_path):
-    with open(service_account_path) as f:
-        credentials = json.load(f)
-    ee.Initialize(
-        ee.ServiceAccountCredentials(credentials['client_email'], service_account_path),
-        project='ndvi-project-484422'
-    )
-else:
-    ee.Initialize(project='ndvi-project-484422')
+# Initialize Earth Engine
+ee.Initialize()
 
-# 2. FETCH PADDOCKS
+# 1. Setup Dates
+end_date = datetime.now()
+start_date = end_date - timedelta(days=21)
+
+# 2. Load Shapes
 GEOJSON_URL = "https://storage.googleapis.com/ndvi-exports/paddocks.geojson"
-def get_paddocks():
-    response = requests.get(GEOJSON_URL)
-    response.raise_for_status()
-    return ee.FeatureCollection(response.json())
+resp = requests.get(GEOJSON_URL)
+paddocks = ee.FeatureCollection(resp.json())
 
-allPaddocks = get_paddocks()
+# 3. Get Collection for the last 21 days
+s2_col = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+          .filterBounds(paddocks)
+          .filterDate(start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
+          .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40)))
 
-# 3. DATE & COLLECTION
-end_date = ee.Date(time.strftime('%Y-%m-%d'))
-start_date = end_date.advance(-14, 'day')
-
-collection = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-              .filterBounds(allPaddocks.geometry())
-              .filterDate(start_date, end_date)
-              .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40)))
-
-# 4. PROCESSING FUNCTION
-def process_image(image):
-    img_date = image.date()
+def analyze_collection(image):
+    # Standard NDVI
+    img_ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI')
+    img_date = image.date().format('dd/MM/yyyy')
     
-    # FORCED DATE LOGIC: Explicitly getting year, month, day to avoid "Day 37" bug
-    year = img_date.get('year').format('%d')
-    month = img_date.get('month').format('%02d')
-    day = img_date.get('day').format('%02d') 
-    
-    date_str = ee.String(year).cat('-').cat(month).cat('-').cat(day)
-    
-    hour = img_date.get('hour').format('%02d')
-    minute = img_date.get('minute').format('%02d')
-    update_time = date_str.cat(' ').cat(hour).cat(':').cat(minute)
-    
-    cloud_pc = image.get('CLOUDY_PIXEL_PERCENTAGE')
-    img_id = image.id()
-    ndvi_img = image.normalizedDifference(['B8', 'B4']).rename('ndvi_effective')
-    
-    def stats_per_paddock(paddock):
-        stats = ndvi_img.reduceRegion(
-            reducer=ee.Reducer.mean(),
+    def process_paddocks(paddock):
+        stats = img_ndvi.reduceRegion(
+            reducer=ee.Reducer.mean().combine(
+                reducer=ee.Reducer.percentile([10, 90]),
+                sharedInputs=True
+            ),
             geometry=paddock.geometry(),
-            scale=10,
-            maxPixels=1e9
+            scale=10
         )
-        return ee.Feature(None, {
-            'paddock_name': paddock.get('name'), 
-            'date': date_str,
-            'ndvi_effective': stats.get('ndvi_effective'),
-            'cloud_pc': cloud_pc,
-            'last_update': update_time,
-            'image_id': img_id 
+        
+        p10 = ee.Number(stats.get('NDVI_p10'))
+        p90 = ee.Number(stats.get('NDVI_p90'))
+        spread = p90.subtract(p10)
+        
+        # Detection logic (TP17/MP17 calibrated)
+        is_partial = spread.gt(0.16).And(p90.gt(0.78)).And(p10.lt(0.72))
+        
+        return paddock.set({
+            'paddock_name': paddock.get('name'),
+            'ndvi_mean': stats.get('NDVI'),
+            'is_partial': is_partial,
+            'date': img_date
         })
-    return allPaddocks.map(stats_per_paddock)
+    
+    return paddocks.map(process_paddocks)
 
-# --- CRITICAL: results_fc must be defined out here ---
-results_fc = collection.map(process_image).flatten().filter(ee.Filter.notNull(['ndvi_effective']))
+# Flatten the collection of features into one list
+all_results = s2_col.map(analyze_collection).flatten()
 
-# 5. TILE URLS
-# We check if there's data before calling getInfo
-unique_ids = ee.List(results_fc.aggregate_array('image_id')).distinct().getInfo()
-map_metadata = {}
-viz = {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}
+# 4. Generate partial.csv (Last 21 days detections)
+# We group by name to see if it was partial AT ANY POINT in the last 21 days
+partial_detections = all_results.filter(ee.Filter.eq('is_partial', 1)).getInfo()
+unique_partials = {}
+for f in partial_detections['features']:
+    name = f['properties']['paddock_name']
+    date = f['properties']['date']
+    unique_partials[name] = date # Keeps the most recent date detected
 
-for iid in unique_ids:
-    img = ee.Image(f"COPERNICUS/S2_SR_HARMONIZED/{iid}")
-    map_info = img.normalizedDifference(['B8', 'B4']).getMapId(viz)
-    map_metadata[iid] = {'tile_url': map_info['tile_fetcher'].url_format}
+partial_rows = [[name, 'Partial'] for name in unique_partials.keys()]
+pd.DataFrame(partial_rows).to_csv('partial.csv', index=False, header=False)
 
-def attach_maps(f):
-    img_id = f.get('image_id')
-    meta = ee.Dictionary(map_metadata).get(img_id)
-    return f.set({'tile_url': ee.Dictionary(meta).get('tile_url')})
+# 5. Generate ndvi_data.csv (Standard Latest Only)
+# For the main dashboard, we still only want the single most recent data point per paddock
+latest_data = all_results.sort('system:time_start', False)
+# (Logic to pick only the single latest per paddock name goes here if needed for clean DB)
+# For now, saving all 21 days of history to the DB:
+full_list = all_results.getInfo()
+ndvi_rows = [[f['properties']['paddock_name'], f['properties']['date'], f['properties']['ndvi_mean']] for f in full_list['features']]
+pd.DataFrame(ndvi_rows).to_csv('ndvi_data.csv', index=False, header=False)
 
-final_results = results_fc.map(attach_maps)
-
-# 6. EXPORT
-task = ee.batch.Export.table.toCloudStorage(
-    collection=final_results,
-    description='NDVI_Sync',
-    bucket='ndvi-exports',
-    fileNamePrefix='ndvi_data',
-    fileFormat='CSV',
-    selectors=['paddock_name', 'date', 'ndvi_effective', 'cloud_pc', 'last_update', 'tile_url']
-)
-task.start()
-print(f"Task Started: {task.id}")
+print(f"Detections in 21 days: {len(partial_rows)}")
