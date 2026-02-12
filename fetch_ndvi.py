@@ -23,21 +23,20 @@ resp = requests.get(GEOJSON_URL)
 paddocks = ee.FeatureCollection(resp.json())
 
 # 3. Get Collection for the last 21 days
-s2_col = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-          .filterBounds(paddocks)
-          .filterDate(start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
-          .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40)))
+s2_col = (
+    ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+    .filterBounds(paddocks)
+    .filterDate(start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
+    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40))
+)
 
 def analyze_collection(image):
     img_ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI')
     img_date = image.date().format('dd/MM/yyyy')
-    
-    # Cloud check for this specific image to use in biomass adjustment
     cloud_pc = image.get('CLOUDY_PIXEL_PERCENTAGE')
-    
+
     def process_paddocks(paddock):
-        # FIXED: Corrected Reducer.combine syntax
-        # Using .combine(reducer2=...) or positional arguments
+        # Combined reducer: mean + percentiles
         stats = img_ndvi.reduceRegion(
             reducer=ee.Reducer.mean().combine(
                 reducer2=ee.Reducer.percentile([10, 90]),
@@ -46,22 +45,23 @@ def analyze_collection(image):
             geometry=paddock.geometry(),
             scale=10
         )
-        
+
+        # Correct reducer output keys
         p10 = ee.Number(stats.get('NDVI_p10'))
         p90 = ee.Number(stats.get('NDVI_p90'))
         spread = p90.subtract(p10)
-        
-        # Detection logic (TP17/MP17 calibrated)
+
+        # Detection logic
         is_partial = spread.gt(0.16).And(p90.gt(0.78)).And(p10.lt(0.72))
-        
+
         return paddock.set({
             'paddock_name': paddock.get('name'),
-            'ndvi_mean': stats.get('NDVI'),
+            'ndvi_mean': stats.get('NDVI_mean'),   # <-- FIXED
             'cloud_pc': cloud_pc,
             'is_partial': is_partial,
             'date': img_date
         })
-    
+
     return paddocks.map(process_paddocks)
 
 # Flatten the collection of features into one list
@@ -69,6 +69,7 @@ all_results = s2_col.map(analyze_collection).flatten()
 
 # 4. Generate partial.csv (Last 21 days detections)
 partial_detections = all_results.filter(ee.Filter.eq('is_partial', 1)).getInfo()
+
 unique_partials = {}
 for f in partial_detections['features']:
     name = f['properties']['paddock_name']
@@ -77,14 +78,18 @@ for f in partial_detections['features']:
 partial_rows = [[name, status] for name, status in unique_partials.items()]
 pd.DataFrame(partial_rows).to_csv('partial.csv', index=False, header=False)
 
-# 5. Generate ndvi_data.csv (Standard Latest Only)
-# We sort by date to make sure the latest data is at the top of the CSV
+# 5. Generate ndvi_data.csv (Latest-first NDVI data)
 full_list = all_results.sort('system:time_start', False).getInfo()
+
 ndvi_rows = []
 for f in full_list['features']:
     props = f['properties']
-    # Format: Paddock, Date, NDVI, Cloud%
-    ndvi_rows.append([props['paddock_name'], props['date'], props['ndvi_mean'], props['cloud_pc']])
+    ndvi_rows.append([
+        props['paddock_name'],
+        props['date'],
+        props['ndvi_mean'],
+        props['cloud_pc']
+    ])
 
 pd.DataFrame(ndvi_rows).to_csv('ndvi_data.csv', index=False, header=False)
 
