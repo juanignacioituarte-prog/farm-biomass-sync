@@ -36,13 +36,23 @@ collection = (ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
 
 # 4. PROCESSING
 def process_image(image):
-    # FIX: Use 'yyyy-MM-dd' for standard dates. 
-    # In GEE/Joda-Time:
-    # 'dd' = Day of month (01-31)
-    # 'D'  = Day of year (1-365) - This was likely causing your "32" and "37"
-    date_str = image.date().format('yyyy-MM-dd')
-    update_time = image.date().format('yyyy-MM-dd HH:mm')
+    # Get the date object
+    ee_date = image.date()
     
+    # Explicitly get year, month, and day as numbers, then format them
+    # This bypasses the Joda-Time .format() pattern matching issues
+    year = ee_date.get('year').format('%d')
+    month = ee_date.get('month').format('%02d')
+    day = ee_date.get('day').format('%02d')
+    
+    date_str = ee.String(year).cat('-').cat(month).cat('-').cat(day)
+    
+    # For the timestamp, we can use a similar concatenation if needed
+    hour = ee_date.get('hour').format('%02d')
+    minute = ee_date.get('minute').format('%02d')
+    update_time = date_str.cat(' ').cat(hour).cat(':').cat(minute)
+    
+    # ... rest of your code ...
     cloud_pc = image.get('CLOUDY_PIXEL_PERCENTAGE')
     img_id = image.id()
     ndvi_img = image.normalizedDifference(['B8', 'B4']).rename('ndvi_effective')
@@ -56,6 +66,7 @@ def process_image(image):
         )
         return ee.Feature(None, {
             'paddock_name': paddock.get('name'), 
+            # Use the concatenated strings here
             'date': date_str,
             'ndvi_effective': stats.get('ndvi_effective'),
             'cloud_pc': cloud_pc,
@@ -63,8 +74,6 @@ def process_image(image):
             'image_id': img_id 
         })
     return allPaddocks.map(stats_per_paddock)
-
-results_fc = collection.map(process_image).flatten().filter(ee.Filter.notNull(['ndvi_effective']))
 
 # 5. TILE URLS
 unique_ids = ee.List(results_fc.aggregate_array('image_id')).distinct().getInfo()
