@@ -14,11 +14,7 @@ creds = service_account.Credentials.from_service_account_file(
 service = build('sheets', 'v4', credentials=creds)
 
 def sync_data():
-    """
-    Synchronizes the latest-image NDVI dataset and the Partial Grazing detections.
-    """
-
-    # 1. SYNC NDVI DATABASE (Append new records)
+    # 1. SYNC NDVI DATABASE
     try:
         if os.path.exists('ndvi_data.csv'):
             ndvi_df = pd.read_csv('ndvi_data.csv', header=None)
@@ -36,15 +32,13 @@ def sync_data():
     except Exception as e:
         print(f"NDVI Sync Error: {e}")
 
-    # 2. SYNC PARTIAL GRAZING (Overwrite/Clear and Update)
+    # 2. SYNC PARTIAL GRAZING
     try:
-        # Clear existing partial detections
         service.spreadsheets().values().clear(
             spreadsheetId=SPREADSHEET_ID,
             range='partial!A:B'
         ).execute()
 
-        # Load new partial detections
         if os.path.exists('partial.csv') and os.path.getsize('partial.csv') > 0:
             partial_df = pd.read_csv('partial.csv', header=None)
             partial_values = partial_df.values.tolist()
@@ -58,7 +52,7 @@ def sync_data():
                 ).execute()
                 print(f"Synced {len(partial_values)} partial grazing detections.")
         else:
-            print("No partial grazing events detected in the latest image. Sheet cleared.")
+            print("No partial grazing events detected in the last 21 days. Sheet cleared.")
 
     except Exception as e:
         print(f"Partial Sync Error: {e}")
