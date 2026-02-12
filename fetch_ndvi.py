@@ -22,55 +22,53 @@ GEOJSON_URL = "https://storage.googleapis.com/ndvi-exports/paddocks.geojson"
 resp = requests.get(GEOJSON_URL)
 paddocks = ee.FeatureCollection(resp.json())
 
-# 3. Sentinel‑2 collection
+# 3. Sentinel‑2 collection (but we will pick only the latest image)
 s2_col = (
     ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
     .filterBounds(paddocks)
     .filterDate(start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
     .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 40))
+    .sort('system:time_start', False)   # newest first
 )
 
-# --- ANALYSIS PER IMAGE ---
-def analyze_collection(image):
-    img_ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI')
-    img_date = image.date().format('dd/MM/yyyy')
-    cloud_pc = image.get('CLOUDY_PIXEL_PERCENTAGE')
-    image_id = image.get('system:index')
+# --- SELECT ONLY THE LATEST IMAGE ---
+latest_image = s2_col.first()
 
-    def process_paddocks(paddock):
-        stats = img_ndvi.reduceRegion(
-            reducer=ee.Reducer.mean().combine(
-                reducer2=ee.Reducer.percentile([10, 90]),
-                sharedInputs=True
-            ),
-            geometry=paddock.geometry(),
-            scale=10
-        )
+# --- ANALYSIS ON THE SINGLE IMAGE ---
+def analyze_paddock(paddock):
+    img_ndvi = latest_image.normalizedDifference(['B8', 'B4']).rename('NDVI')
 
-        p10 = ee.Number(stats.get('NDVI_p10'))
-        p90 = ee.Number(stats.get('NDVI_p90'))
-        spread = p90.subtract(p10)
+    stats = img_ndvi.reduceRegion(
+        reducer=ee.Reducer.mean().combine(
+            reducer2=ee.Reducer.percentile([10, 90]),
+            sharedInputs=True
+        ),
+        geometry=paddock.geometry(),
+        scale=10
+    )
 
-        is_partial = spread.gt(0.16).And(p90.gt(0.78)).And(p10.lt(0.72))
+    p10 = ee.Number(stats.get('NDVI_p10'))
+    p90 = ee.Number(stats.get('NDVI_p90'))
+    spread = p90.subtract(p10)
 
-        return paddock.set({
-            'paddock_name': paddock.get('name'),
-            'ndvi_mean': stats.get('NDVI_mean'),
-            'cloud_pc': cloud_pc,
-            'is_partial': is_partial,
-            'date': img_date,
-            'image_id': image_id
-        })
+    is_partial = spread.gt(0.16).And(p90.gt(0.78)).And(p10.lt(0.72))
 
-    return paddocks.map(process_paddocks)
+    return paddock.set({
+        'paddock_name': paddock.get('name'),
+        'ndvi_mean': stats.get('NDVI_mean'),
+        'is_partial': is_partial,
+        'date': latest_image.date().format('dd/MM/yyyy'),
+        'image_id': latest_image.get('system:index'),
+        'cloud_pc': latest_image.get('CLOUDY_PIXEL_PERCENTAGE')
+    })
 
-# Flatten results
-all_results = s2_col.map(analyze_collection).flatten()
+# Run analysis
+results = paddocks.map(analyze_paddock)
 
-# --- Pull results to Python ---
-full_list = all_results.sort('system:time_start', False).getInfo()
+# Pull results to Python
+full_list = results.getInfo()
 
-# --- Build tile URLs in Python ---
+# --- Build tile URLs ---
 viz = {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}
 tile_cache = {}
 
@@ -108,4 +106,4 @@ for f in full_list['features']:
 pd.DataFrame(rows).to_csv('ndvi_data.csv', index=False, header=False)
 pd.DataFrame(partial_rows).to_csv('partial.csv', index=False, header=False)
 
-print("Tile URLs added successfully.")
+print("Analysis complete using ONLY the latest image.")
