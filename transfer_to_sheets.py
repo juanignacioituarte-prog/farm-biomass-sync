@@ -15,14 +15,16 @@ service = build('sheets', 'v4', credentials=creds)
 SYNC_CONFIG = [
     {
         "db_csv": "ndvi_data.csv",
-        "db_range": "NDVI_Database!A1",
+        "db_range": "NDVI_Database!A:E",
+        "db_start": "NDVI_Database!A1",
         "partial_csv": "partial.csv",
         "partial_range": "partial!A:B",
         "partial_start": "partial!A1"
     },
     {
         "db_csv": "ndvi_data_wainono.csv",
-        "db_range": "NDVI_Wainono!A1",
+        "db_range": "NDVI_Wainono!A:E",
+        "db_start": "NDVI_Wainono!A1",
         "partial_csv": "partial_wainono.csv",
         "partial_range": "partial_w!A:B",
         "partial_start": "partial_w!A1"
@@ -31,33 +33,33 @@ SYNC_CONFIG = [
 
 def sync_data():
     for farm in SYNC_CONFIG:
-        # 1. SYNC NDVI DATABASE (Bulk Append for Initialization)
+        # 1. OVERWRITE NDVI DATABASE
         if os.path.exists(farm['db_csv']):
             try:
-                # fillna('') is critical here to prevent the "Invalid JSON" errors
-                # that occur when Earth Engine returns a NaN value.
+                # Clear existing content
+                service.spreadsheets().values().clear(
+                    spreadsheetId=SPREADSHEET_ID, range=farm['db_range']).execute()
+
+                # Load and upload new data
                 ndvi_df = pd.read_csv(farm['db_csv'], header=None).fillna('')
                 ndvi_values = ndvi_df.values.tolist()
 
                 if ndvi_values:
-                    service.spreadsheets().values().append(
+                    service.spreadsheets().values().update(
                         spreadsheetId=SPREADSHEET_ID,
-                        range=farm['db_range'],
+                        range=farm['db_start'],
                         valueInputOption='RAW',
-                        insertDataOption='INSERT_ROWS',
                         body={'values': ndvi_values}
                     ).execute()
-                    print(f"Successfully initialized {farm['db_csv']} with {len(ndvi_values)} rows.")
+                    print(f"Overwrote {farm['db_csv']} in Sheets.")
             except Exception as e:
-                print(f"Error syncing {farm['db_csv']}: {e}")
+                print(f"Error overwriting {farm['db_csv']}: {e}")
 
-        # 2. SYNC PARTIAL GRAZING (Update)
+        # 2. OVERWRITE PARTIAL GRAZING
         if os.path.exists(farm['partial_csv']):
             try:
                 service.spreadsheets().values().clear(
-                    spreadsheetId=SPREADSHEET_ID,
-                    range=farm['partial_range']
-                ).execute()
+                    spreadsheetId=SPREADSHEET_ID, range=farm['partial_range']).execute()
 
                 partial_df = pd.read_csv(farm['partial_csv'], header=None).fillna('')
                 partial_values = partial_df.values.tolist()
@@ -69,8 +71,9 @@ def sync_data():
                         valueInputOption='RAW',
                         body={'values': partial_values}
                     ).execute()
+                    print(f"Overwrote {farm['partial_csv']} in Sheets.")
             except Exception as e:
-                print(f"Error syncing {farm['partial_csv']}: {e}")
+                print(f"Error overwriting {farm['partial_csv']}: {e}")
 
 if __name__ == "__main__":
     sync_data()
