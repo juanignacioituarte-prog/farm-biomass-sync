@@ -1,5 +1,6 @@
 import os
 import pandas as pd
+import numpy as np
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 
@@ -8,8 +9,7 @@ SERVICE_ACCOUNT_FILE = 'credentials.json'
 SPREADSHEET_ID = '1yGxWBMOLbWrzxwyMum3UgQkQdkAMra2PlQPBd8eIA04'
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 
-creds = service_account.Credentials.from_service_account_file(
-    SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
 service = build('sheets', 'v4', credentials=creds)
 
 SYNC_CONFIG = [
@@ -31,10 +31,11 @@ SYNC_CONFIG = [
 
 def sync_data():
     for farm in SYNC_CONFIG:
-        # 1. SYNC NDVI DATABASE (Append)
-        try:
-            if os.path.exists(farm['db_csv']):
-                ndvi_df = pd.read_csv(farm['db_csv'], header=None)
+        # 1. SYNC NDVI DATABASE
+        if os.path.exists(farm['db_csv']):
+            try:
+                # fillna('') removes NaN tokens that crash the Google Sheets API
+                ndvi_df = pd.read_csv(farm['db_csv'], header=None).fillna('')
                 ndvi_values = ndvi_df.values.tolist()
 
                 if ndvi_values:
@@ -45,19 +46,19 @@ def sync_data():
                         insertDataOption='INSERT_ROWS',
                         body={'values': ndvi_values}
                     ).execute()
-                    print(f"Appended {len(ndvi_values)} records to {farm['db_range']}.")
-        except Exception as e:
-            print(f"NDVI Sync Error ({farm['db_csv']}): {e}")
+                    print(f"Synced {farm['db_csv']} to {farm['db_range']}")
+            except Exception as e:
+                print(f"Error syncing {farm['db_csv']}: {e}")
 
-        # 2. SYNC PARTIAL GRAZING (Clear and Update)
-        try:
-            service.spreadsheets().values().clear(
-                spreadsheetId=SPREADSHEET_ID,
-                range=farm['partial_range']
-            ).execute()
+        # 2. SYNC PARTIAL GRAZING
+        if os.path.exists(farm['partial_csv']):
+            try:
+                service.spreadsheets().values().clear(
+                    spreadsheetId=SPREADSHEET_ID,
+                    range=farm['partial_range']
+                ).execute()
 
-            if os.path.exists(farm['partial_csv']) and os.path.getsize(farm['partial_csv']) > 0:
-                partial_df = pd.read_csv(farm['partial_csv'], header=None)
+                partial_df = pd.read_csv(farm['partial_csv'], header=None).fillna('')
                 partial_values = partial_df.values.tolist()
 
                 if partial_values:
@@ -67,9 +68,9 @@ def sync_data():
                         valueInputOption='RAW',
                         body={'values': partial_values}
                     ).execute()
-                    print(f"Synced {len(partial_values)} events to {farm['partial_range']}.")
-        except Exception as e:
-            print(f"Partial Sync Error ({farm['partial_csv']}): {e}")
+                    print(f"Updated {farm['partial_range']}")
+            except Exception as e:
+                print(f"Error syncing {farm['partial_csv']}: {e}")
 
 if __name__ == "__main__":
     sync_data()
