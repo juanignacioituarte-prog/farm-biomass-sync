@@ -13,10 +13,9 @@ with open('credentials.json') as f:
 auth = ee.ServiceAccountCredentials(service_account_email, 'credentials.json')
 ee.Initialize(auth)
 
-# 1. Setup Dates & Farm Config
-# Increased range to 60 days to ensure we find at least two clear images
+# 1. Setup Dates (Increased range to 90 days to find 3 clear images)
 end_date = datetime.now()
-start_date = end_date - timedelta(days=60)
+start_date = end_date - timedelta(days=90)
 
 FARMS = [
     {
@@ -54,7 +53,7 @@ def process_paddocks(paddock, img_ndvi):
     is_partial = spread.gt(0.16).And(p90.gt(0.78)).And(p10.lt(0.72))
 
     return paddock.set({
-        'paddock_name': paddock.get('name'), # Using "name" from your GeoJSON
+        'paddock_name': paddock.get('name'),
         'ndvi_mean': mean_val,
         'is_partial': is_partial,
         'area_ha': area
@@ -66,7 +65,6 @@ for farm in FARMS:
         resp = requests.get(farm['url'])
         paddocks = ee.FeatureCollection(resp.json())
 
-        # Get collection of clear images
         s2_col = (
             ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
             .filterBounds(paddocks)
@@ -75,8 +73,8 @@ for farm in FARMS:
             .sort('system:time_start', False)
         )
 
-        # Take the top 2 images
-        image_list = s2_col.toList(2)
+        # Get the last 3 images
+        image_list = s2_col.toList(3)
         count = image_list.length().getInfo()
         
         if count == 0:
@@ -86,14 +84,13 @@ for farm in FARMS:
         all_rows = []
         all_partials = []
 
-        # Loop through the available images (up to 2)
         for i in range(count):
             image = ee.Image(image_list.get(i))
             img_date = image.date().format('dd/MM/yyyy').getInfo()
             cloud_pc = image.get('CLOUDY_PIXEL_PERCENTAGE').getInfo()
             img_ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI')
 
-            print(f" Analyzing image from {img_date}...")
+            print(f" Analyzing image {i+1}/{count} from {img_date}...")
             analyzed_features = paddocks.map(lambda p: process_paddocks(p, img_ndvi)).getInfo()
 
             viz = {'min': 0, 'max': 1, 'palette': ['red', 'yellow', 'green']}
@@ -103,16 +100,16 @@ for farm in FARMS:
                 p = f['properties']
                 m_val = p['ndvi_mean'] if p['ndvi_mean'] is not None else ""
                 
-                all_rows.append([p['paddock_name'], img_date, m_val, cloud_pc, tile_url, "", ""])
+                # Format: Paddock Name, Date, NDVI, Cloud%, TileURL
+                all_rows.append([p['paddock_name'], img_date, m_val, cloud_pc, tile_url])
 
                 # Only flag partials for the absolute LATEST image (index 0)
                 if i == 0 and p['is_partial'] == 1 and p['area_ha'] > 3.0:
                     all_partials.append([p['paddock_name'], 'Partial'])
 
-        # Save sanitized data
         pd.DataFrame(all_rows).replace([np.nan, 'NaN'], '', regex=True).to_csv(farm['db_file'], index=False, header=False)
         pd.DataFrame(all_partials).replace([np.nan, 'NaN'], '', regex=True).to_csv(farm['partial_file'], index=False, header=False)
-        print(f"Created {farm['db_file']} with {count} dates of data.")
+        print(f"Successfully saved {count} dates for {farm['name']}.")
         
     except Exception as e:
         print(f"Error processing {farm['name']}: {e}")
