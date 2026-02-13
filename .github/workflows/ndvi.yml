@@ -29,8 +29,8 @@ jobs:
         run: |
           echo "$GCP_KEY" > credentials.json
 
-      - name: Step 1 - GEE Analysis
+      - name: Step 1 - GEE Analysis (All Farms)
         run: python fetch_ndvi.py
 
-      - name: Step 2 - Sync to Google Sheets
+      - name: Step 2 - Sync to Google Sheets (All Farms)
         run: python transfer_to_sheets.py
