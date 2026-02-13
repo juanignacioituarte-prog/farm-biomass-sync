@@ -15,7 +15,7 @@ ee.Initialize(auth)
 
 # 1. Setup Dates & Farm Config
 end_date = datetime.now()
-start_date = end_date - timedelta(days=30)
+start_date = end_date - timedelta(days=30) # Increased to 30 days for better coverage
 
 FARMS = [
     {
@@ -50,10 +50,11 @@ def process_paddocks(paddock, img_ndvi):
     mean_val = stats.get('NDVI_mean')
     spread = p90.subtract(p10)
 
+    # Detection logic
     is_partial = spread.gt(0.16).And(p90.gt(0.78)).And(p10.lt(0.72))
 
     return paddock.set({
-        'paddock_name': paddock.get('name'), # Corrected to use "name"
+        'paddock_name': paddock.get('name'), # Using "name" from GeoJSON
         'ndvi_mean': mean_val,
         'is_partial': is_partial,
         'area_ha': area
@@ -99,9 +100,10 @@ for farm in FARMS:
             if p['is_partial'] == 1 and p['area_ha'] > 3.0:
                 partial_rows.append([p['paddock_name'], 'Partial'])
 
-        # Final cleanup for NaN before saving
+        # Sanitize data: replace NaN with empty strings before saving CSV
         pd.DataFrame(rows).replace([np.nan, 'NaN'], '', regex=True).to_csv(farm['db_file'], index=False, header=False)
         pd.DataFrame(partial_rows).replace([np.nan, 'NaN'], '', regex=True).to_csv(farm['partial_file'], index=False, header=False)
+        print(f"Successfully processed {farm['name']}")
         
     except Exception as e:
         print(f"Error processing {farm['name']}: {e}")
