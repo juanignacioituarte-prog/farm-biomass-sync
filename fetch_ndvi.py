@@ -54,7 +54,7 @@ def process_paddocks(paddock, img_ndvi):
     is_partial = spread.gt(0.16).And(p90.gt(0.78)).And(p10.lt(0.72))
 
     return paddock.set({
-        'paddock_name': paddock.get('name'),
+        'paddock_name': paddock.get('name'), # Accessing "name" as requested
         'ndvi_mean': mean_val,
         'is_partial': is_partial,
         'area_ha': area
@@ -93,7 +93,7 @@ for farm in FARMS:
 
         for f in analyzed_features['features']:
             p = f['properties']
-            # Clean NDVI values: use "" if None/NaN
+            # Clean NDVI values: ensure None/NaN is an empty string
             m_val = p['ndvi_mean'] if p['ndvi_mean'] is not None else ""
             
             rows.append([p['paddock_name'], img_date, m_val, cloud_pc, tile_url, "", ""])
@@ -104,6 +104,7 @@ for farm in FARMS:
         # Save and ensure NaN is handled as empty string in CSV
         pd.DataFrame(rows).replace(np.nan, '', regex=True).to_csv(farm['db_file'], index=False, header=False)
         pd.DataFrame(partial_rows).replace(np.nan, '', regex=True).to_csv(farm['partial_file'], index=False, header=False)
+        print(f"Files created for {farm['name']}.")
         
     except Exception as e:
         print(f"Error processing {farm['name']}: {e}")
