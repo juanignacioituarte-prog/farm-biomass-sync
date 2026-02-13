@@ -31,10 +31,11 @@ SYNC_CONFIG = [
 
 def sync_data():
     for farm in SYNC_CONFIG:
-        # 1. SYNC NDVI DATABASE
+        # 1. SYNC NDVI DATABASE (Bulk Append for Initialization)
         if os.path.exists(farm['db_csv']):
             try:
-                # fillna('') removes NaN tokens that crash the Google Sheets API
+                # fillna('') is critical here to prevent the "Invalid JSON" errors
+                # that occur when Earth Engine returns a NaN value.
                 ndvi_df = pd.read_csv(farm['db_csv'], header=None).fillna('')
                 ndvi_values = ndvi_df.values.tolist()
 
@@ -46,11 +47,11 @@ def sync_data():
                         insertDataOption='INSERT_ROWS',
                         body={'values': ndvi_values}
                     ).execute()
-                    print(f"Synced {farm['db_csv']} to {farm['db_range']}")
+                    print(f"Successfully initialized {farm['db_csv']} with {len(ndvi_values)} rows.")
             except Exception as e:
                 print(f"Error syncing {farm['db_csv']}: {e}")
 
-        # 2. SYNC PARTIAL GRAZING
+        # 2. SYNC PARTIAL GRAZING (Update)
         if os.path.exists(farm['partial_csv']):
             try:
                 service.spreadsheets().values().clear(
@@ -68,7 +69,6 @@ def sync_data():
                         valueInputOption='RAW',
                         body={'values': partial_values}
                     ).execute()
-                    print(f"Updated {farm['partial_range']}")
             except Exception as e:
                 print(f"Error syncing {farm['partial_csv']}: {e}")
 
