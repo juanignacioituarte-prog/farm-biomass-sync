@@ -5,7 +5,7 @@ on:
   schedule:
     - cron: '0 18 * * *'
 
-# Granting write permissions to the entire workflow
+# This block is essential to override default restrictions
 permissions:
   contents: write
 
@@ -17,7 +17,7 @@ jobs:
       - name: Keepalive Workflow
         uses: gautamkrishnar/keepalive-workflow@v1
         with:
-          use_api: true 
+          use_api: true
 
   build:
     runs-on: ubuntu-latest
