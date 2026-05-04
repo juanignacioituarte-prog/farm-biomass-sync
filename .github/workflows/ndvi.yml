@@ -6,9 +6,20 @@ on:
     - cron: '0 18 * * *'
 
 jobs:
+  # New job to prevent GitHub from disabling the schedule
+  keep_alive:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Keepalive Workflow
+        uses: gautamkrishnar/keepalive-workflow@v1
+        with:
+          use_api: true # Uses GitHub API to prevent unnecessary git history clutter
+
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
