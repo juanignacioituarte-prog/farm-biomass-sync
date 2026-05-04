@@ -5,22 +5,10 @@ on:
   schedule:
     - cron: '0 18 * * *'
 
-# This block is essential to override default restrictions
-permissions:
-  contents: write
-
 jobs:
-  keep_alive:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Keepalive Workflow
-        uses: gautamkrishnar/keepalive-workflow@v1
-        with:
-          use_api: true
-
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Repo
         uses: actions/checkout@v4
