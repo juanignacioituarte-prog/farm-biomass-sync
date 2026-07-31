@@ -1,1 +1,4 @@
 earthengine-api
+ 
+psycopg2-binary
+python-dotenv
