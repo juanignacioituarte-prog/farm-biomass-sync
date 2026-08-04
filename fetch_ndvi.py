@@ -2,6 +2,8 @@ import ee
 import requests
 import pandas as pd
 import json
+import csv
+import io
 import numpy as np
 from datetime import datetime, timedelta
 
@@ -26,11 +28,71 @@ FARMS = [
     },
     {
         "name": "wainono",
-        "url": "https://storage.googleapis.com/ndvi-exports/wainono.geojson",
+        # Boundaries now come from the "Paddock Boundaries" tab of the feed sync sheet
+        # (published CSV) instead of the static wainono.geojson export.
+        "csv_url": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ1OhQkUXzp_TuFwnePsBSp2XlHE7Pw165eReEsOUyLwSldUuvviIdx-M8j0bbII2SYc7trwpjfM6aA/pub?gid=1320161965&single=true&output=csv",
         "db_file": "ndvi_data_wainono.csv",
         "partial_file": "partial_wainono.csv"
     }
 ]
+
+def load_boundaries_from_csv(url):
+    """Build a GeoJSON FeatureCollection from a published Google Sheet.
+
+    Expects the columns paddockId, name, farmId, calcArea, geometryType, geometryJson,
+    where geometryJson holds the raw coordinates array for the given geometryType.
+    """
+    resp = requests.get(url)
+    resp.raise_for_status()
+    resp.encoding = 'utf-8'
+
+    features = []
+    skipped = 0
+    for row in csv.DictReader(io.StringIO(resp.text)):
+        name = (row.get('name') or '').strip()
+        raw_geom = (row.get('geometryJson') or '').strip()
+        if not name or not raw_geom:
+            skipped += 1
+            continue
+
+        try:
+            coords = json.loads(raw_geom)
+        except json.JSONDecodeError:
+            print(f"  Skipping {name}: geometryJson is not valid JSON.")
+            skipped += 1
+            continue
+
+        try:
+            area = float(row.get('calcArea') or 0)
+        except ValueError:
+            area = 0
+
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": (row.get('geometryType') or 'MultiPolygon').strip(),
+                "coordinates": coords
+            },
+            "properties": {
+                "name": name,
+                "paddockId": (row.get('paddockId') or '').strip(),
+                "farmId": (row.get('farmId') or '').strip(),
+                "calcArea": area
+            }
+        })
+
+    if not features:
+        raise ValueError(f"No usable paddock geometries found at {url}")
+
+    print(f"  Loaded {len(features)} paddocks from sheet ({skipped} rows skipped).")
+    return {"type": "FeatureCollection", "features": features}
+
+def load_boundaries(farm):
+    if farm.get('csv_url'):
+        return load_boundaries_from_csv(farm['csv_url'])
+    resp = requests.get(farm['url'])
+    resp.raise_for_status()
+    return resp.json()
 
 def process_paddocks(paddock, img_ndvi):
     geom = paddock.geometry()
@@ -62,8 +124,7 @@ def process_paddocks(paddock, img_ndvi):
 for farm in FARMS:
     try:
         print(f"Processing farm: {farm['name']}...")
-        resp = requests.get(farm['url'])
-        paddocks = ee.FeatureCollection(resp.json())
+        paddocks = ee.FeatureCollection(load_boundaries(farm))
 
         s2_col = (
             ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")

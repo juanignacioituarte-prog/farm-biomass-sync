@@ -9,6 +9,11 @@ SERVICE_ACCOUNT_FILE = 'credentials.json'
 SPREADSHEET_ID = '1yGxWBMOLbWrzxwyMum3UgQkQdkAMra2PlQPBd8eIA04'
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
 
+# The "feed sync" spreadsheet that the Wainono app reads from. Supply the real
+# spreadsheet id (the /d/<ID>/edit one, not the published /d/e/2PACX-... key) via
+# the FEED_SYNC_SHEET_ID secret, and give the service account Editor access to it.
+FEED_SYNC_SHEET_ID = os.environ.get('FEED_SYNC_SHEET_ID', '').strip()
+
 creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
 service = build('sheets', 'v4', credentials=creds)
 
@@ -23,9 +28,27 @@ SYNC_CONFIG = [
         "db_csv": "ndvi_data_wainono.csv",
         "db_range": "NDVI_Wainono!A2:E",
         "partial_csv": "partial_wainono.csv",
-        "partial_range": "partial_w!A2:B"
+        "partial_range": "partial_w!A2:B",
+        # Also mirrored into the "ndvi" tab (gid 288741439) of the feed sync sheet.
+        "feed_sync_gid": 288741439,
+        "feed_sync_header": ["paddock", "date", "ndvi", "cloud", "tileUrl"]
     }
 ]
+
+def quote_title(title):
+    """Wrap a tab name for A1 notation, escaping any embedded single quotes."""
+    return "'" + title.replace("'", "''") + "'"
+
+def title_for_gid(spreadsheet_id, gid):
+    """Look up a tab's current name by its gid, so renames don't break the sync."""
+    meta = service.spreadsheets().get(
+        spreadsheetId=spreadsheet_id,
+        fields='sheets.properties(sheetId,title)').execute()
+    for sheet in meta.get('sheets', []):
+        props = sheet['properties']
+        if props['sheetId'] == gid:
+            return props['title']
+    raise ValueError(f"No tab with gid {gid} in spreadsheet {spreadsheet_id}")
 
 def sync_data():
     for farm in SYNC_CONFIG:
@@ -70,15 +93,60 @@ def sync_data():
             except Exception as e:
                 print(f"Error overwriting {farm['partial_csv']}: {e}")
 
-import psycopg2
-from psycopg2.extras import execute_values
-import os
-from dotenv import load_dotenv
+def sync_to_feed_sync():
+    """Mirror the NDVI results into the feed sync spreadsheet's own tab."""
+    if not FEED_SYNC_SHEET_ID:
+        print('No FEED_SYNC_SHEET_ID set. Skipping feed sync sheet.')
+        return
+
+    for farm in SYNC_CONFIG:
+        gid = farm.get('feed_sync_gid')
+        if gid is None or not os.path.exists(farm['db_csv']):
+            continue
+
+        try:
+            tab = quote_title(title_for_gid(FEED_SYNC_SHEET_ID, gid))
+
+            ndvi_df = pd.read_csv(farm['db_csv'], header=None).fillna('')
+            values = ndvi_df.values.tolist()
+            if not values:
+                print(f"{farm['db_csv']} is empty. Leaving {tab} untouched.")
+                continue
+
+            header = farm.get('feed_sync_header')
+            if header:
+                values.insert(0, header)
+
+            # This tab is owned by the sync, so the whole thing is replaced each run.
+            service.spreadsheets().values().clear(
+                spreadsheetId=FEED_SYNC_SHEET_ID, range=f'{tab}!A:E').execute()
+
+            service.spreadsheets().values().update(
+                spreadsheetId=FEED_SYNC_SHEET_ID,
+                range=f'{tab}!A1',
+                valueInputOption='RAW',
+                body={'values': values}
+            ).execute()
+            print(f"Wrote {len(values)} rows from {farm['db_csv']} to {tab} in the feed sync sheet.")
+        except Exception as e:
+            print(f"Error writing {farm['db_csv']} to the feed sync sheet: {e}")
+
 from datetime import datetime
 
-load_dotenv('.env')
+try:
+    import psycopg2
+    from psycopg2.extras import execute_values
+    from dotenv import load_dotenv
+    load_dotenv('.env')
+    DB_SYNC_AVAILABLE = True
+except ImportError as e:
+    print(f'Postgres deps unavailable ({e}). Skipping Supabase sync.')
+    DB_SYNC_AVAILABLE = False
 
 def sync_to_database():
+    if not DB_SYNC_AVAILABLE:
+        return
+
     db_url = os.environ.get('DATABASE_URL')
     if not db_url:
         print('No DATABASE_URL found. Skipping Supabase sync.')
@@ -164,4 +232,5 @@ def sync_to_database():
 
 if __name__ == "__main__":
     sync_data()
+    sync_to_feed_sync()
     sync_to_database()
