@@ -23,16 +23,14 @@ FARMS = [
     {
         "name": "paddocks",
         "url": "https://storage.googleapis.com/ndvi-exports/paddocks.geojson",
-        "db_file": "ndvi_data.csv",
-        "partial_file": "partial.csv"
+        "db_file": "ndvi_data.csv"
     },
     {
         "name": "wainono",
         # Boundaries now come from the "Paddock Boundaries" tab of the feed sync sheet
         # (published CSV) instead of the static wainono.geojson export.
         "csv_url": "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ1OhQkUXzp_TuFwnePsBSp2XlHE7Pw165eReEsOUyLwSldUuvviIdx-M8j0bbII2SYc7trwpjfM6aA/pub?gid=1320161965&single=true&output=csv",
-        "db_file": "ndvi_data_wainono.csv",
-        "partial_file": "partial_wainono.csv"
+        "db_file": "ndvi_data_wainono.csv"
     }
 ]
 
@@ -97,27 +95,16 @@ def load_boundaries(farm):
 def process_paddocks(paddock, img_ndvi):
     geom = paddock.geometry()
     area = geom.area().divide(10000)
-    
+
     stats = img_ndvi.reduceRegion(
-        reducer=ee.Reducer.mean().combine(
-            reducer2=ee.Reducer.percentile([10, 90]),
-            sharedInputs=True
-        ),
+        reducer=ee.Reducer.mean(),
         geometry=geom,
         scale=10
     )
 
-    p10 = ee.Number(stats.get('NDVI_p10', 0))
-    p90 = ee.Number(stats.get('NDVI_p90', 0))
-    mean_val = stats.get('NDVI_mean')
-    spread = p90.subtract(p10)
-
-    is_partial = spread.gt(0.16).And(p90.gt(0.78)).And(p10.lt(0.72))
-
     return paddock.set({
         'paddock_name': paddock.get('name'),
-        'ndvi_mean': mean_val,
-        'is_partial': is_partial,
+        'ndvi_mean': stats.get('NDVI_mean'),
         'area_ha': area
     })
 
@@ -143,7 +130,6 @@ for farm in FARMS:
             continue
 
         all_rows = []
-        all_partials = []
 
         for i in range(count):
             image = ee.Image(image_list.get(i))
@@ -164,12 +150,7 @@ for farm in FARMS:
                 # Format: Paddock Name, Date, NDVI, Cloud%, TileURL
                 all_rows.append([p['paddock_name'], img_date, m_val, cloud_pc, tile_url])
 
-                # Only flag partials for the absolute LATEST image (index 0)
-                if i == 0 and p['is_partial'] == 1 and p['area_ha'] > 3.0:
-                    all_partials.append([p['paddock_name'], 'Partial'])
-
         pd.DataFrame(all_rows).replace([np.nan, 'NaN'], '', regex=True).to_csv(farm['db_file'], index=False, header=False)
-        pd.DataFrame(all_partials).replace([np.nan, 'NaN'], '', regex=True).to_csv(farm['partial_file'], index=False, header=False)
         print(f"Successfully saved {count} dates for {farm['name']}.")
         
     except Exception as e:

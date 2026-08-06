@@ -20,15 +20,11 @@ service = build('sheets', 'v4', credentials=creds)
 SYNC_CONFIG = [
     {
         "db_csv": "ndvi_data.csv",
-        "db_range": "NDVI_Database!A2:E",  # Starts at A2 to keep header
-        "partial_csv": "partial.csv",
-        "partial_range": "partial!A2:B"    # Starts at A2 to keep header
+        "db_range": "NDVI_Database!A2:E"  # Starts at A2 to keep header
     },
     {
         "db_csv": "ndvi_data_wainono.csv",
         "db_range": "NDVI_Wainono!A2:E",
-        "partial_csv": "partial_wainono.csv",
-        "partial_range": "partial_w!A2:B",
         # Also mirrored into the "ndvi" tab (gid 288741439) of the feed sync sheet.
         "feed_sync_gid": 288741439,
         "feed_sync_header": ["paddock", "date", "ndvi", "cloud", "tileUrl"]
@@ -72,26 +68,6 @@ def sync_data():
                     print(f"Overwrote {farm['db_csv']} data (Headers preserved).")
             except Exception as e:
                 print(f"Error overwriting {farm['db_csv']}: {e}")
-
-        # 2. OVERWRITE PARTIAL GRAZING (From Row 2 down)
-        if os.path.exists(farm['partial_csv']):
-            try:
-                service.spreadsheets().values().clear(
-                    spreadsheetId=SPREADSHEET_ID, range=farm['partial_range']).execute()
-
-                partial_df = pd.read_csv(farm['partial_csv'], header=None).fillna('')
-                partial_values = partial_df.values.tolist()
-
-                if partial_values:
-                    service.spreadsheets().values().update(
-                        spreadsheetId=SPREADSHEET_ID,
-                        range=farm['partial_range'].split(':')[0],
-                        valueInputOption='RAW',
-                        body={'values': partial_values}
-                    ).execute()
-                    print(f"Overwrote {farm['partial_csv']} data (Headers preserved).")
-            except Exception as e:
-                print(f"Error overwriting {farm['partial_csv']}: {e}")
 
 def sync_to_feed_sync():
     """Mirror the NDVI results into the feed sync spreadsheet's own tab."""
@@ -205,24 +181,6 @@ def sync_to_database():
                 if records_to_insert:
                     execute_values(cursor, 'INSERT INTO "PastureRecord" (id, "paddockId", date, cover, ndvi, "growthRate", "cloudCover", "tileUrl", type) VALUES %s', records_to_insert)
                     print(f"Inserted {len(records_to_insert)} NDVI records into DB for {farm['db_csv']}")
-
-            # 2. Sync Partials
-            if os.path.exists(farm['partial_csv']):
-                partial_df = pd.read_csv(farm['partial_csv'], header=None).fillna('')
-                cursor.execute('DELETE FROM "PaddockPartial" WHERE "farmId" = %s', (f_id,))
-                
-                partials_to_insert = []
-                for _, row in partial_df.iterrows():
-                    p_name = str(row[0]).strip()
-                    status = str(row[1]).strip()
-                    if not p_name: continue
-                    
-                    import uuid
-                    partials_to_insert.append((str(uuid.uuid4()), f_id, p_name, status))
-                
-                if partials_to_insert:
-                    execute_values(cursor, 'INSERT INTO "PaddockPartial" (id, "farmId", "paddockName", status) VALUES %s', partials_to_insert)
-                    print(f"Inserted {len(partials_to_insert)} Partials into DB for {farm['partial_csv']}")
 
         conn.commit()
         cursor.close()
